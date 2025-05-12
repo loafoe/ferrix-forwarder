@@ -12,7 +12,7 @@ jobs:
       packages: write
     strategy:
       matrix:
-        component: [server, client]
+        component: [server, client, forwarder]
     steps:
       -
         name: Set up QEMU

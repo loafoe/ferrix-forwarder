@@ -1,0 +1,18 @@
+# Kube
+secret.yaml
+# IDE
+.idea/
+*.iml
+*.ipr
+*.iws
+*.swp
+# Terraform
+*.tfvars
+*.tfstate
+*.tfstate.*
+*.tfplan
+.terraform/
+.terraform-version
+.terraform.lock.hcl
+# Mac
+.DS_Store/
