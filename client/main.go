@@ -248,6 +248,30 @@ func handleConnection(wsConfig *websocket.Config, conn net.Conn, authToken strin
 	}
 }
 
+func startHealthServer(port int) {
+	// Define HTTP endpoints
+	http.HandleFunc("/health", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		w.Write([]byte(`{"status":"UP"}`))
+	})
+
+	// Create a simple HTTP server
+	server := &http.Server{
+		Addr:         fmt.Sprintf(":%d", port),
+		ReadTimeout:  10 * time.Second,
+		WriteTimeout: 10 * time.Second,
+	}
+
+	// Start the HTTP server in a goroutine
+	go func() {
+		slog.Info("Starting health check server", "port", port)
+		if err := server.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+			slog.Error("Health check server error", "error", err)
+		}
+	}()
+}
+
 func main() {
 	// Parse command-line flags
 	flag.Parse()
@@ -323,6 +347,9 @@ func main() {
 		"port", port,
 		"socks_server", socksServer,
 		"ws_scheme", wsScheme)
+
+	// Start health check server
+	startHealthServer(8080)
 
 	// Set up graceful shutdown
 	sigChan := make(chan os.Signal, 1)
