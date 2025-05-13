@@ -18,7 +18,7 @@ import (
 
 	"log/slog"
 
-	socks5 "github.com/armon/go-socks5"
+	"github.com/things-go/go-socks5"
 	"golang.org/x/net/websocket"
 )
 
@@ -28,16 +28,17 @@ var (
 	httpsPort = flag.Int("https_port", 443, "The port to listen to for https responses")
 )
 
-type RuleSet []string
+// CustomRuleSet implements the socks5.RuleSet interface
+type CustomRuleSet []string
 
-func newRuleSet(allowedHosts string) *RuleSet {
+func newRuleSet(allowedHosts string) *CustomRuleSet {
 	if allowedHosts == "" {
-		rs := make(RuleSet, 0)
+		rs := make(CustomRuleSet, 0)
 		return &rs
 	}
 
 	nms := strings.Split(allowedHosts, ",")
-	rs := make(RuleSet, len(nms))
+	rs := make(CustomRuleSet, len(nms))
 	for i, nm := range nms {
 		slog.Default().Info("adding", "host", nm)
 		rs[i] = nm
@@ -45,7 +46,7 @@ func newRuleSet(allowedHosts string) *RuleSet {
 	return &rs
 }
 
-func (rs *RuleSet) Allow(ctx context.Context, req *socks5.Request) (context.Context, bool) {
+func (rs *CustomRuleSet) Allow(ctx context.Context, req *socks5.Request) (context.Context, bool) {
 	fqdn := fmt.Sprintf("%s:%d", req.DestAddr.FQDN, req.DestAddr.Port)
 	if len(*rs) == 0 {
 		slog.Default().Info("allowing as allow-list is empty", "fqdn", fqdn)
@@ -150,11 +151,12 @@ func main() {
 		os.Exit(1)
 	}
 
-	socks, err := socks5.New(&socks5.Config{Rules: newRuleSet(allowedHosts)})
-	if err != nil {
-		slog.Error("Failed to create SOCKS5 server", "error", err)
-		os.Exit(1)
-	}
+	// Create a new SOCKS5 server with the custom rule set
+	// Using github.com/things-go/go-socks5 which provides a more modern and maintained SOCKS5 implementation
+	// with additional features like buffer pooling, custom dialing, and more authorization options
+	socksServer := socks5.NewServer(
+		socks5.WithRule(newRuleSet(allowedHosts)),
+	)
 
 	// Setup HTTP server with proper timeouts
 	httpMux := setDebugHandlers(http.NewServeMux())
@@ -181,13 +183,19 @@ func main() {
 			// The next line disables HTTP/2, as this does not support websockets.
 			TLSNextProto: make(map[string]func(*http.Server, *tls.Conn, http.Handler)),
 		}
-		if httpsServer.TLSConfig, err = getTlsConfig(); err != nil {
-			slog.Error("Failed to configure TLS", "error", err)
+		var tlsErr error
+		if httpsServer.TLSConfig, tlsErr = getTlsConfig(); tlsErr != nil {
+			slog.Error("Failed to configure TLS", "error", tlsErr)
 			os.Exit(1)
 		}
 	}
 
-	mainMux.Handle("/", authWrapper(websocket.Handler(func(conn *websocket.Conn) { socks.ServeConn(conn) }), authToken))
+	mainMux.Handle("/", authWrapper(websocket.Handler(func(conn *websocket.Conn) {
+		err := socksServer.ServeConn(conn)
+		if err != nil {
+			slog.Error("Error serving connection", "error", err)
+		}
+	}), authToken))
 
 	slog.Default().Info("Starting HTTP server", "port", *httpPort)
 

@@ -17,9 +17,9 @@ require (
 )
 
 require (
-	github.com/armon/go-socks5 v0.0.0-20160902184237-e75332964ef5
 	github.com/fsnotify/fsnotify v1.8.0 // indirect
 	github.com/spf13/viper v1.20.1
+	github.com/things-go/go-socks5 v0.0.5
 	golang.org/x/net v0.40.0
 	golang.org/x/sys v0.33.0 // indirect
 	golang.org/x/text v0.25.0 // indirect
