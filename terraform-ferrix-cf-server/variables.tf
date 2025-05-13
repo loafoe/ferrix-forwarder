@@ -22,10 +22,10 @@ variable "region" {
 
 variable "ferrix_forwarder_client_image" {
   type    = string
-  default = "ghcr.io/loafoe/ferrix-forwarder-client:main"
+  default = "ghcr.io/loafoe/ferrix-forwarder-client:v0.0.1"
 }
 
 variable "ferrix_forwarder_server_image" {
   type    = string
-  default = "ghcr.io/loafoe/ferrix-forwarder-server:main"
+  default = "ghcr.io/loafoe/ferrix-forwarder-server:v0.0.1"
 }
