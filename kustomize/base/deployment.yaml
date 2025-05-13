@@ -1,0 +1,55 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: ferrix-forwarder-client
+  labels:
+    app.kubernetes.io/name: ferrix-forwarder-client
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: ferrix-forwarder-client
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: ferrix-forwarder-client
+    spec:
+      containers:
+        - name: ferrix-forwarder-client
+          securityContext:
+            {}
+          image: ghcr.io/loafoe/ferrix-forwarder-client:main
+          resources:
+            requests:
+              cpu: 100m
+              memory: 128Mi
+            limits:
+              cpu: 200m
+              memory: 256Mi
+          imagePullPolicy: Always
+          env:
+            - name: USERSPACE_PORTFW_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: ferrix-forwarder-client-token
+                  key: token
+            - name: USERSPACE_PORTFW_SOCKS_SERVER
+              value: "server-included-parrot.us-east.philips-healthsuite.com:4443"
+            - name: USERSPACE_PORTFW_LISTEN_ADDR
+              value: "0.0.0.0"
+            - name: USERSPACE_PORTFW_PORT
+              value: "8082"
+          ports:
+            - name: socks
+              containerPort: 8082
+              protocol: TCP
+          readinessProbe:
+            tcpSocket:
+              port: 8082
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          livenessProbe:
+            tcpSocket:
+              port: 8082
+            initialDelaySeconds: 15
+            periodSeconds: 20
