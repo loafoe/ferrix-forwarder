@@ -21,7 +21,7 @@ func pipe(src io.Reader, dst io.WriteCloser, result chan<- int64) {
 
 func main() {
 	viper.SetDefault("local", "127.0.0.1:8388")
-	viper.SetDefault("proxy", "127.0.0.1:8082")
+	viper.SetDefault("proxy", "127.0.0.1:1080")
 	viper.SetDefault("target", "www.icanhazip.com:80")
 	viper.SetEnvPrefix("forwarder")
 	viper.AutomaticEnv()
