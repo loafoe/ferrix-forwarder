@@ -13,6 +13,7 @@ resource "cloudfoundry_app" "server" {
   docker_image = var.ferrix_forwarder_server_image
   memory       = 128
   strategy     = "blue-green"
+  instances    = var.server_instances
 
   environment = {
     USERSPACE_PORTFW_TOKEN         = random_password.password.result

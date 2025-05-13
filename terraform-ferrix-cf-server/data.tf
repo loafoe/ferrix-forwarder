@@ -17,5 +17,5 @@ data "cloudfoundry_space" "space" {
 }
 
 data "cloudfoundry_org" "org" {
-  name   = var.cf_org_name
+  name = var.cf_org_name
 }

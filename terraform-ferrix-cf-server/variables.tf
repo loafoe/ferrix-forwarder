@@ -29,3 +29,8 @@ variable "ferrix_forwarder_server_image" {
   type    = string
   default = "ghcr.io/loafoe/ferrix-forwarder-server:v0.0.2"
 }
+
+variable "server_instances" {
+  type    = number
+  default = 2
+}
