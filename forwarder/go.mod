@@ -3,7 +3,6 @@ module github.com/loafoe/ferrix-forwarder/forwarder
 go 1.24.3
 
 require (
-	github.com/sirupsen/logrus v1.9.3
 	github.com/spf13/viper v1.20.1
 	golang.org/x/net v0.40.0
 )
