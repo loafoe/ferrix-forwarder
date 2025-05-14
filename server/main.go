@@ -9,10 +9,10 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
-	"strings"
 	"syscall"
 	"time"
 
+	"github.com/loafoe/ferrix-forwarder/server/ruleset"
 	"github.com/spf13/pflag"
 	"github.com/spf13/viper"
 
@@ -21,41 +21,6 @@ import (
 	"github.com/things-go/go-socks5"
 	"golang.org/x/net/websocket"
 )
-
-// CustomRuleSet implements the socks5.RuleSet interface
-type CustomRuleSet []string
-
-func newRuleSet(allowedHosts string) *CustomRuleSet {
-	if allowedHosts == "" {
-		rs := make(CustomRuleSet, 0)
-		return &rs
-	}
-
-	nms := strings.Split(allowedHosts, ",")
-	rs := make(CustomRuleSet, len(nms))
-	for i, nm := range nms {
-		slog.Default().Info("adding", "host", nm)
-		rs[i] = nm
-	}
-	return &rs
-}
-
-func (rs *CustomRuleSet) Allow(ctx context.Context, req *socks5.Request) (context.Context, bool) {
-	fqdn := fmt.Sprintf("%s:%d", req.DestAddr.FQDN, req.DestAddr.Port)
-	if len(*rs) == 0 {
-		slog.Default().Info("allowing as allow-list is empty", "fqdn", fqdn)
-		return ctx, true
-	}
-	for _, host := range *rs {
-		slog.Default().Info("testing", "host", host, "fqdn", fqdn)
-		if fqdn == host {
-			slog.Default().Info("allowing as it matches allow-list", "host", host, "fqdn", fqdn)
-			return ctx, true
-		}
-	}
-	slog.Default().Info("denying, not on allow-list", "fqdn", fqdn)
-	return ctx, false
-}
 
 // getTlsConfig creates and returns a TLS configuration for the HTTPS server.
 // It loads certificates from the certsDir directory.
@@ -166,7 +131,7 @@ func main() {
 	// Using github.com/things-go/go-socks5 which provides a more modern and maintained SOCKS5 implementation
 	// with additional features like buffer pooling, custom dialing, and more authorization options
 	socksServer := socks5.NewServer(
-		socks5.WithRule(newRuleSet(allowedHosts)),
+		socks5.WithRule(ruleset.NewHostRuleSet(allowedHosts)),
 	)
 
 	// Setup HTTP server with proper timeouts
