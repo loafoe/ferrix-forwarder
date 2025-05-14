@@ -16,3 +16,7 @@ secret.yaml
 .terraform.lock.hcl
 # Mac
 .DS_Store/
+# Binaries
+server/server
+client/client
+forwarder/forwarder
