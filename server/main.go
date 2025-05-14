@@ -4,7 +4,6 @@ import (
 	"context"
 	"crypto/tls"
 	"crypto/x509"
-	"flag"
 	"fmt"
 	"net/http"
 	"os"
@@ -14,18 +13,13 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/spf13/pflag"
 	"github.com/spf13/viper"
 
 	"log/slog"
 
 	"github.com/things-go/go-socks5"
 	"golang.org/x/net/websocket"
-)
-
-var (
-	certsDir  = flag.String("certs_dir", "", "Directory of certs for starting a wss:// server, or empty for ws:// server. Expected files are: cert.pem and key.pem.")
-	httpPort  = flag.Int("http_port", 8080, "The port to listen to for http responses")
-	httpsPort = flag.Int("https_port", 443, "The port to listen to for https responses")
 )
 
 // CustomRuleSet implements the socks5.RuleSet interface
@@ -65,7 +59,7 @@ func (rs *CustomRuleSet) Allow(ctx context.Context, req *socks5.Request) (contex
 
 // getTlsConfig creates and returns a TLS configuration for the HTTPS server.
 // It loads certificates from the certsDir directory.
-func getTlsConfig() (*tls.Config, error) {
+func getTlsConfig(certsDir string) (*tls.Config, error) {
 	tlscfg := &tls.Config{
 		ClientAuth:               tls.RequireAndVerifyClientCert,
 		ClientCAs:                x509.NewCertPool(),
@@ -80,13 +74,13 @@ func getTlsConfig() (*tls.Config, error) {
 			tls.TLS_ECDHE_RSA_WITH_CHACHA20_POLY1305,
 		},
 	}
-	if ca, err := os.ReadFile(filepath.Join(*certsDir, "cacert.pem")); err == nil {
+	if ca, err := os.ReadFile(filepath.Join(certsDir, "cacert.pem")); err == nil {
 		tlscfg.ClientCAs.AppendCertsFromPEM(ca)
 	} else {
 		return nil, fmt.Errorf("failed reading CA certificate: %w", err)
 	}
 
-	if cert, err := tls.LoadX509KeyPair(filepath.Join(*certsDir, "cert.pem"), filepath.Join(*certsDir, "key.pem")); err == nil {
+	if cert, err := tls.LoadX509KeyPair(filepath.Join(certsDir, "cert.pem"), filepath.Join(certsDir, "key.pem")); err == nil {
 		tlscfg.Certificates = append(tlscfg.Certificates, cert)
 	} else {
 		return nil, fmt.Errorf("failed reading client certificate: %w", err)
@@ -125,27 +119,44 @@ func authWrapper(h http.Handler, authToken string) http.Handler {
 }
 
 func main() {
-	// Parse command line flags
-	flag.Parse()
-
-	// Validate inputs
-	if *httpPort < 1 || *httpPort > 65535 {
-		slog.Error("Invalid HTTP port", "port", *httpPort)
-		os.Exit(1)
-	}
-	if *httpsPort < 1 || *httpsPort > 65535 {
-		slog.Error("Invalid HTTPS port", "port", *httpsPort)
-		os.Exit(1)
-	}
+	// Define command line flags
+	pflag.String("certs_dir", "", "Directory of certs for starting a wss:// server, or empty for ws:// server. Expected files are: cert.pem and key.pem.")
+	pflag.Int("http_port", 8080, "The port to listen to for http responses")
+	pflag.Int("https_port", 443, "The port to listen to for https responses")
+	pflag.String("allowed_hosts", "", "Comma-separated list of hosts that are allowed to be forwarded to")
+	pflag.String("token", "", "Authentication token for securing the server")
+	pflag.Parse()
 
 	// Setup configuration via viper
-	viper.SetDefault("port", 8080)
-	viper.SetDefault("allowed_hosts", "")
 	viper.SetEnvPrefix("userspace_portfw")
 	viper.AutomaticEnv()
 
+	// Bind flags to viper
+	viper.BindPFlags(pflag.CommandLine)
+
+	// Set default values
+	viper.SetDefault("http_port", 8080)
+	viper.SetDefault("https_port", 443)
+	viper.SetDefault("allowed_hosts", "")
+
+	// Get configuration values
+	httpPort := viper.GetInt("http_port")
+	httpsPort := viper.GetInt("https_port")
+	certsDir := viper.GetString("certs_dir")
 	allowedHosts := viper.GetString("allowed_hosts")
 	authToken := viper.GetString("token")
+
+	// Validate inputs
+	if httpPort < 1 || httpPort > 65535 {
+		slog.Error("Invalid HTTP port", "port", httpPort)
+		os.Exit(1)
+	}
+	if httpsPort < 1 || httpsPort > 65535 {
+		slog.Error("Invalid HTTPS port", "port", httpsPort)
+		os.Exit(1)
+	}
+
+	// Check for required configuration
 	if authToken == "" {
 		slog.Error("Missing authentication token", "env", "USERSPACE_PORTFW_TOKEN")
 		os.Exit(1)
@@ -161,7 +172,7 @@ func main() {
 	// Setup HTTP server with proper timeouts
 	httpMux := setDebugHandlers(http.NewServeMux())
 	httpServer := &http.Server{
-		Addr:         fmt.Sprintf(":%d", *httpPort),
+		Addr:         fmt.Sprintf(":%d", httpPort),
 		Handler:      httpMux,
 		ReadTimeout:  30 * time.Second,
 		WriteTimeout: 30 * time.Second,
@@ -171,11 +182,11 @@ func main() {
 
 	// Setup HTTPS server if certificates are provided
 	var httpsServer *http.Server
-	if *certsDir != "" {
+	if certsDir != "" {
 		httpsMux := setDebugHandlers(http.NewServeMux())
 		mainMux = httpsMux
 		httpsServer = &http.Server{
-			Addr:         fmt.Sprintf(":%d", *httpsPort),
+			Addr:         fmt.Sprintf(":%d", httpsPort),
 			Handler:      httpsMux,
 			ReadTimeout:  30 * time.Second,
 			WriteTimeout: 30 * time.Second,
@@ -184,7 +195,7 @@ func main() {
 			TLSNextProto: make(map[string]func(*http.Server, *tls.Conn, http.Handler)),
 		}
 		var tlsErr error
-		if httpsServer.TLSConfig, tlsErr = getTlsConfig(); tlsErr != nil {
+		if httpsServer.TLSConfig, tlsErr = getTlsConfig(certsDir); tlsErr != nil {
 			slog.Error("Failed to configure TLS", "error", tlsErr)
 			os.Exit(1)
 		}
@@ -197,7 +208,7 @@ func main() {
 		}
 	}), authToken))
 
-	slog.Default().Info("Starting HTTP server", "port", *httpPort)
+	slog.Default().Info("Starting HTTP server", "port", httpPort)
 
 	// Graceful shutdown
 	idleConnsClosed := make(chan struct{})
