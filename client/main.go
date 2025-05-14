@@ -3,7 +3,6 @@ package main
 import (
 	"crypto/tls"
 	"crypto/x509"
-	"flag"
 	"fmt"
 	"io"
 	"log/slog"
@@ -17,18 +16,12 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/spf13/pflag"
 	"github.com/spf13/viper"
 	"golang.org/x/net/proxy"
 	"golang.org/x/net/websocket"
 )
 
-var (
-	listenAddrFlag  = flag.String("listen_addr", "", "The address to listen on")
-	portFlag        = flag.Int("port", 0, "The port to listen on")
-	socksServerFlag = flag.String("socks_server", "", "The SOCKS server to connect to")
-	authTokenFlag   = flag.String("auth_token", "", "The authentication token to use")
-	wsSchemeFlag    = flag.String("ws_scheme", "wss", "Websocket scheme to use (ws or wss)")
-)
 
 // getTlsConfig creates and returns a TLS configuration for the client.
 // It uses the system certificate pool and sets up secure TLS options.
@@ -273,56 +266,50 @@ func startHealthServer(port int) {
 }
 
 func main() {
-	// Parse command-line flags
-	flag.Parse()
+	// Define command line flags
+	pflag.String("listen_addr", "0.0.0.0", "The address to listen on")
+	pflag.Int("port", 8080, "The port to listen on")
+	pflag.String("socks_server", "", "The SOCKS server to connect to")
+	pflag.String("token", "", "The authentication token to use")
+	pflag.String("ws_scheme", "wss", "Websocket scheme to use (ws or wss)")
+	pflag.Parse()
 
-	// Setup configuration with viper
+	// Setup configuration via viper
+	viper.SetEnvPrefix("userspace_portfw")
+	viper.AutomaticEnv()
+
+	// Bind flags to viper
+	viper.BindPFlags(pflag.CommandLine)
+
+	// Set default values
 	viper.SetDefault("listen_addr", "0.0.0.0")
 	viper.SetDefault("port", 8080)
 	viper.SetDefault("socks_server", "")
 	viper.SetDefault("ws_scheme", "wss")
-	viper.SetEnvPrefix("userspace_portfw")
-	viper.AutomaticEnv()
 
-	// Get configuration from flags or environment variables
-	listenAddr := *listenAddrFlag
-	if listenAddr == "" {
-		listenAddr = viper.GetString("listen_addr")
-	}
+	// Get configuration values
+	listenAddr := viper.GetString("listen_addr")
+	port := viper.GetInt("port")
+	socksServer := viper.GetString("socks_server")
+	authToken := viper.GetString("token")
+	wsScheme := viper.GetString("ws_scheme")
 
-	port := *portFlag
-	if port == 0 {
-		port = viper.GetInt("port")
-	}
-
-	// Validate port range
+	// Validate inputs
 	if port < 1 || port > 65535 {
 		slog.Error("Invalid port", "port", port)
 		os.Exit(1)
 	}
 
-	socksServer := *socksServerFlag
 	if socksServer == "" {
-		socksServer = viper.GetString("socks_server")
-		if socksServer == "" {
-			slog.Error("Missing SOCKS server", "env", "USERSPACE_PORTFW_SOCKS_SERVER")
-			os.Exit(1)
-		}
+		slog.Error("Missing SOCKS server", "env", "USERSPACE_PORTFW_SOCKS_SERVER")
+		os.Exit(1)
 	}
 
-	authToken := *authTokenFlag
 	if authToken == "" {
-		authToken = viper.GetString("token")
-		if authToken == "" {
-			slog.Error("Missing authentication token", "env", "USERSPACE_PORTFW_TOKEN")
-			os.Exit(1)
-		}
+		slog.Error("Missing authentication token", "env", "USERSPACE_PORTFW_TOKEN")
+		os.Exit(1)
 	}
 
-	wsScheme := *wsSchemeFlag
-	if wsScheme == "" {
-		wsScheme = viper.GetString("ws_scheme")
-	}
 	if wsScheme != "ws" && wsScheme != "wss" {
 		slog.Error("Invalid websocket scheme", "scheme", wsScheme)
 		os.Exit(1)
