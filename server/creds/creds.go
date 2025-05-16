@@ -27,6 +27,13 @@ type APITokenChecker struct {
 // Valid implements socks5.CredentialStore.
 func (j *APITokenChecker) Valid(user string, password string, userAddr string) bool {
 	slog.Default().Info("validating credentials", "user", user, "password", password, "userAddr", userAddr)
+	
+	// TODO: Implement actual validation logic
+	// For now, just return true for any credentials
+	// 
+	// Current thinking is to use the signature as the user and the password value and then verify there is an
+	// entry in the token endpoints map as we it during the WebSocket handshake
+
 	return true
 }
 
