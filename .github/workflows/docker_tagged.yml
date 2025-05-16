@@ -6,42 +6,13 @@ on:
     - '*'
 
 jobs:
-  check_changes:
-    runs-on: ubuntu-latest
-    outputs:
-      server: ${{ steps.filter.outputs.server }}
-      client: ${{ steps.filter.outputs.client }}
-      forwarder: ${{ steps.filter.outputs.forwarder }}
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          fetch-depth: 2
-      - uses: dorny/paths-filter@v3
-        id: filter
-        with:
-          filters: |
-            server:
-              - 'server/**'
-            client:
-              - 'client/**'
-            forwarder:
-              - 'forwarder/**'
-
   build:
-    needs: check_changes
-    if: ${{ needs.check_changes.outputs.server == 'true' || needs.check_changes.outputs.client == 'true' || needs.check_changes.outputs.forwarder == 'true' }}
     runs-on: ubuntu-latest
     permissions:
       packages: write
     strategy:
       matrix:
-        include:
-          - component: server
-            should_run: ${{ needs.check_changes.outputs.server == 'true' }}
-          - component: client
-            should_run: ${{ needs.check_changes.outputs.client == 'true' }}
-          - component: forwarder
-            should_run: ${{ needs.check_changes.outputs.forwarder == 'true' }}
+        components: ["server", "client", "forwarder"]
     steps:
       - name: Set up QEMU
         uses: docker/setup-qemu-action@v3
