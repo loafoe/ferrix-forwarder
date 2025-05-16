@@ -134,9 +134,6 @@ func main() {
 	// with additional features like buffer pooling, custom dialing, and more authorization options
 	socksServer := socks5.NewServer(
 		socks5.WithRule(tokenChecker),
-		socks5.WithAuthMethods([]socks5.Authenticator{
-			socks5.UserPassAuthenticator{},
-		}),
 		socks5.WithCredential(tokenChecker),
 	)
 
