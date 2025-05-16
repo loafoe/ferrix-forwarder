@@ -6,6 +6,7 @@ import (
 	"log/slog"
 	"strings"
 
+	"github.com/loafoe/caddy-token/keys"
 	"github.com/things-go/go-socks5"
 )
 
@@ -38,17 +39,25 @@ func (j *APITokenChecker) AddToken(token string) (string, error) {
 	}
 	signature := parts[1]
 
-	// TODO: Verify token and add here
-
-	slog.Default().Info("adding endpoints", "signature", signature, "endpoints", endpoints)
-	if len(endpoints) == 0 {
+	verified, keys, err := keys.VerifyAPIKey(token, j.SharedSecret)
+	if err != nil {
+		slog.Default().Error("failed to verify token", "error", err)
+		return "", err
+	}
+	if !verified {
+		slog.Default().Error("token verification failed")
+		return "", fmt.Errorf("token verification failed")
+	}
+	slog.Default().Info("token verified", "signature", signature, "keys", keys)
+	slog.Default().Info("adding endpoints", "signature", signature, "scopes", keys.Scopes)
+	if len(keys.Scopes) == 0 {
 		slog.Default().Info("no endpoints provided, skipping")
 		return "", nil
 	}
 	if j.TokenEndpoints == nil {
 		j.TokenEndpoints = make(map[string][]string)
 	}
-	j.TokenEndpoints[signature] = endpoints
+	j.TokenEndpoints[signature] = keys.Scopes
 	slog.Default().Info("added endpoints", "signature", signature, "endpoints", endpoints)
 	return signature, nil
 }
