@@ -76,8 +76,9 @@ func main() {
 			up, down := make(chan int64), make(chan int64)
 			go pipe(conn, c, up)
 			go pipe(c, conn, down)
-			<-up
-			<-down
+			upBytes := <-up
+			downBytes := <-down
+			slog.Default().Info("done", "remote", conn.RemoteAddr(), "target", target, "up", upBytes, "down", downBytes)
 			return
 		}(conn)
 	}
