@@ -73,12 +73,14 @@ func setDebugHandlers(mux *http.ServeMux) *http.ServeMux {
 // authWrapper creates a middleware that authenticates requests using a token.
 // It checks for the X-STL-Auth header and compares it with the provided token.
 // Unauthorized requests receive a 403 Forbidden response.
-func authWrapper(h http.Handler, authToken string) http.Handler {
+func authWrapper(h http.Handler, authToken string, endpointHolder creds.EndpointHolder) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.Header.Get("X-STL-Auth") != authToken {
+		token := r.Header.Get("X-STL-Auth")
+		if token != authToken {
 			w.WriteHeader(http.StatusForbidden)
 			return
 		}
+		_, _ = endpointHolder.AddToken(token)
 		h.ServeHTTP(w, r) // call original
 	})
 }
@@ -88,7 +90,6 @@ func main() {
 	pflag.String("certs_dir", "", "Directory of certs for starting a wss:// server, or empty for ws:// server. Expected files are: cert.pem and key.pem.")
 	pflag.Int("http_port", 8080, "The port to listen to for http responses")
 	pflag.Int("https_port", 443, "The port to listen to for https responses")
-	pflag.String("allowed_hosts", "", "Comma-separated list of hosts that are allowed to be forwarded to")
 	pflag.String("token", "", "Authentication token for securing the server")
 	pflag.Parse()
 
@@ -108,7 +109,6 @@ func main() {
 	httpPort := viper.GetInt("http_port")
 	httpsPort := viper.GetInt("https_port")
 	certsDir := viper.GetString("certs_dir")
-	allowedHosts := viper.GetString("allowed_hosts")
 	authToken := viper.GetString("token")
 
 	// Validate inputs
@@ -127,7 +127,7 @@ func main() {
 		os.Exit(1)
 	}
 
-	tokenChecker := creds.NewAPITokenChecker(allowedHosts)
+	tokenChecker := creds.NewAPITokenChecker(authToken)
 
 	// Create a new SOCKS5 server with the custom rule set
 	// Using github.com/things-go/go-socks5 which provides a more modern and maintained SOCKS5 implementation

@@ -14,11 +14,12 @@ var _ EndpointHolder = (*APITokenChecker)(nil)
 var _ socks5.RuleSet = (*APITokenChecker)(nil)
 
 type EndpointHolder interface {
-	AddToken(token string, endpoints []string)
+	AddToken(token string) (string, error)
 	RemoveToken(token string)
 }
 
 type APITokenChecker struct {
+	SharedSecret   string
 	TokenEndpoints map[string][]string
 }
 
@@ -28,26 +29,33 @@ func (j *APITokenChecker) Valid(user string, password string, userAddr string) b
 	return true
 }
 
-func (j *APITokenChecker) AddToken(token string, endpoints []string) {
+func (j *APITokenChecker) AddToken(token string) (string, error) {
+	var endpoints []string
+
+	signature := strings.Split(token, ".")[1]
+
+	// TODO: Verify token and add here
+
 	slog.Default().Info("adding target", "token", token, "targets", endpoints)
 	if len(endpoints) == 0 {
 		slog.Default().Info("no endpoints provided, skipping")
-		return
+		return "", nil
 	}
 	if j.TokenEndpoints == nil {
 		j.TokenEndpoints = make(map[string][]string)
 	}
-	j.TokenEndpoints[token] = endpoints
-	slog.Default().Info("added endpoints", "token", token, "endpoints", endpoints)
+	j.TokenEndpoints[signature] = endpoints
+	slog.Default().Info("added endpoints", "signature", signature, "endpoints", endpoints)
+	return signature, nil
 }
 
-func (j *APITokenChecker) RemoveToken(token string) {
-	slog.Default().Info("removing token", "token", token)
+func (j *APITokenChecker) RemoveToken(signature string) {
+	slog.Default().Info("removing token", "signature", signature)
 	if j.TokenEndpoints == nil {
 		return
 	}
-	delete(j.TokenEndpoints, token)
-	slog.Default().Info("removed token", "token", token)
+	delete(j.TokenEndpoints, signature)
+	slog.Default().Info("removed token", "signature", signature)
 }
 
 // Allow implements the socks5.RuleSet interface. It checks if the requested
@@ -71,15 +79,9 @@ func (j *APITokenChecker) Allow(ctx context.Context, req *socks5.Request) (conte
 	return ctx, false
 }
 
-func NewAPITokenChecker(allowedHosts string) *APITokenChecker {
-	rs := &APITokenChecker{}
-	if allowedHosts == "" {
-		return rs
-	}
-	nms := strings.Split(allowedHosts, ",")
-	rs.AddToken("static", nms)
-	for _, nm := range nms {
-		slog.Default().Info("added", "host", nm)
+func NewAPITokenChecker(sharedSecret string) *APITokenChecker {
+	rs := &APITokenChecker{
+		SharedSecret: sharedSecret,
 	}
 	return rs
 }
