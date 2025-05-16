@@ -15,9 +15,9 @@ output "server_url" {
   value       = "https://${cloudfoundry_route.server.hostname}.${data.cloudfoundry_domain.public.name}"
 }
 
-output "auth_token" {
-  description = "The authentication token for the ferrix-forwarder server"
-  value       = random_password.password.result
+output "shared_secret" {
+  description = "The shared secret for verifying tenant keys"
+  value       = random_password.signing_key.result
   sensitive   = true
 }
 
