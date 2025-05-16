@@ -23,12 +23,16 @@ func main() {
 	viper.SetDefault("local", "127.0.0.1:8388")
 	viper.SetDefault("proxy", "127.0.0.1:1080")
 	viper.SetDefault("target", "www.icanhazip.com:80")
+	viper.SetDefault("username", "foo")
+	viper.SetDefault("password", "bar")
 	viper.SetEnvPrefix("forwarder")
 	viper.AutomaticEnv()
 
 	local := viper.GetString("local")
 	socks5 := viper.GetString("proxy")
 	target := viper.GetString("target")
+	username := viper.GetString("username")
+	password := viper.GetString("password")
 	lis, err := net.Listen("tcp", local)
 	if err != nil {
 		slog.Default().Error("cannot listen", "local", local, "error", err)
@@ -37,6 +41,7 @@ func main() {
 	slog.Default().Info("listening", "local", local)
 	slog.Default().Info("proxy", "socks5", socks5)
 	slog.Default().Info("target", "target", target)
+	slog.Default().Info("authentication", "enabled", true, "username", username)
 
 	for {
 		conn, err := lis.Accept()
@@ -49,7 +54,13 @@ func main() {
 			defer func() {
 				_ = conn.Close()
 			}()
-			dailer, err := proxy.SOCKS5("tcp", socks5, nil, &net.Dialer{
+			// Create SOCKS5 authentication with username and password
+			auth := &proxy.Auth{
+				User:     username,
+				Password: password,
+			}
+
+			dailer, err := proxy.SOCKS5("tcp", socks5, auth, &net.Dialer{
 				Timeout:   60 * time.Second,
 				KeepAlive: 30 * time.Second,
 			})

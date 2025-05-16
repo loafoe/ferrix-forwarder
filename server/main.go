@@ -12,7 +12,7 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/loafoe/ferrix-forwarder/server/ruleset"
+	"github.com/loafoe/ferrix-forwarder/server/creds"
 	"github.com/spf13/pflag"
 	"github.com/spf13/viper"
 
@@ -127,11 +127,17 @@ func main() {
 		os.Exit(1)
 	}
 
+	tokenChecker := creds.NewAPITokenChecker(allowedHosts)
+
 	// Create a new SOCKS5 server with the custom rule set
 	// Using github.com/things-go/go-socks5 which provides a more modern and maintained SOCKS5 implementation
 	// with additional features like buffer pooling, custom dialing, and more authorization options
 	socksServer := socks5.NewServer(
-		socks5.WithRule(ruleset.NewHostRuleSet(allowedHosts)),
+		socks5.WithRule(tokenChecker),
+		socks5.WithAuthMethods([]socks5.Authenticator{
+			socks5.UserPassAuthenticator{},
+		}),
+		socks5.WithCredential(tokenChecker),
 	)
 
 	// Setup HTTP server with proper timeouts
