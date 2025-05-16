@@ -40,7 +40,7 @@ func (j *APITokenChecker) AddToken(token string) (string, error) {
 
 	// TODO: Verify token and add here
 
-	slog.Default().Info("adding endpoints", "token", token, "endpoints", endpoints)
+	slog.Default().Info("adding endpoints", "signature", signature, "endpoints", endpoints)
 	if len(endpoints) == 0 {
 		slog.Default().Info("no endpoints provided, skipping")
 		return "", nil
