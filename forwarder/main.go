@@ -70,7 +70,7 @@ func main() {
 			}
 			c, err := dailer.Dial("tcp", target)
 			if err != nil {
-				slog.Default().Warn("cannot dial", "error", err, "target", target)
+				slog.Default().Warn("cannot dial", "error", err, "endpoint", target)
 				return
 			}
 			up, down := make(chan int64), make(chan int64)
@@ -78,7 +78,7 @@ func main() {
 			go pipe(c, conn, down)
 			upBytes := <-up
 			downBytes := <-down
-			slog.Default().Info("done", "remote", conn.RemoteAddr(), "target", target, "up", upBytes, "down", downBytes)
+			slog.Default().Info("done", "remote", conn.RemoteAddr(), "endpoint", target, "up", upBytes, "down", downBytes)
 			return
 		}(conn)
 	}

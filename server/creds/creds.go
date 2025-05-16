@@ -15,7 +15,7 @@ var _ socks5.RuleSet = (*APITokenChecker)(nil)
 
 type EndpointHolder interface {
 	AddToken(token string) (string, error)
-	RemoveToken(token string)
+	RemoveToken(signature string)
 }
 
 type APITokenChecker struct {
@@ -32,11 +32,15 @@ func (j *APITokenChecker) Valid(user string, password string, userAddr string) b
 func (j *APITokenChecker) AddToken(token string) (string, error) {
 	var endpoints []string
 
-	signature := strings.Split(token, ".")[1]
+	parts := strings.Split(token, ".")
+	if len(parts) != 2 {
+		return "", fmt.Errorf("invalid token format")
+	}
+	signature := parts[1]
 
 	// TODO: Verify token and add here
 
-	slog.Default().Info("adding target", "token", token, "targets", endpoints)
+	slog.Default().Info("adding endpoints", "token", token, "endpoints", endpoints)
 	if len(endpoints) == 0 {
 		slog.Default().Info("no endpoints provided, skipping")
 		return "", nil

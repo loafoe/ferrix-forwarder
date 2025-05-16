@@ -174,7 +174,7 @@ func main() {
 		if err != nil {
 			slog.Error("Error serving connection", "error", err)
 		}
-	}), authToken))
+	}), authToken, tokenChecker))
 
 	slog.Default().Info("Starting HTTP server", "port", httpPort)
 
