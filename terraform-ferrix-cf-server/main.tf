@@ -1,4 +1,4 @@
-resource "random_password" "password" {
+resource "random_password" "signing_key" {
   length           = 32
   special          = true
   override_special = "_%@"
@@ -16,7 +16,7 @@ resource "random_pet" "instance" {
 resource "hsdp_tenant_key" "key" {
   project      = "ferrix-forwarder"
   organization = "dip"
-  signing_key  = random_password.password.result
+  signing_key  = random_password.signing_key.result
   expiration   = "2025-12-31T23:59:59Z"
   salt         = random_password.salt.result
 }
@@ -30,7 +30,7 @@ resource "cloudfoundry_app" "server" {
   instances    = var.server_instances
 
   environment = {
-    USERSPACE_PORTFW_TOKEN         = hsdp_tenant_key.key.result
+    USERSPACE_PORTFW_TOKEN         = random_password.signing_key.result
     USERSPACE_PORTFW_ALLOWED_HOSTS = "" # Empty string to allow all hosts
   }
 

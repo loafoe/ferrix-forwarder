@@ -73,14 +73,15 @@ func setDebugHandlers(mux *http.ServeMux) *http.ServeMux {
 // authWrapper creates a middleware that authenticates requests using a token.
 // It checks for the X-STL-Auth header and compares it with the provided token.
 // Unauthorized requests receive a 403 Forbidden response.
-func authWrapper(h http.Handler, authToken string, endpointHolder creds.EndpointHolder) http.Handler {
+func authWrapper(h http.Handler, endpointHolder creds.EndpointHolder) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		token := r.Header.Get("X-STL-Auth")
-		if token != authToken {
+		_, err := endpointHolder.AddToken(token)
+		if err != nil {
+			slog.Error("Failed to add token", "error", err)
 			w.WriteHeader(http.StatusForbidden)
 			return
 		}
-		_, _ = endpointHolder.AddToken(token)
 		h.ServeHTTP(w, r) // call original
 	})
 }
@@ -90,7 +91,7 @@ func main() {
 	pflag.String("certs_dir", "", "Directory of certs for starting a wss:// server, or empty for ws:// server. Expected files are: cert.pem and key.pem.")
 	pflag.Int("http_port", 8080, "The port to listen to for http responses")
 	pflag.Int("https_port", 443, "The port to listen to for https responses")
-	pflag.String("token", "", "Authentication token for securing the server")
+	pflag.String("shared_secret", "", "The shared secret to verify API tokens with")
 	pflag.Parse()
 
 	// Setup configuration via viper
@@ -109,7 +110,7 @@ func main() {
 	httpPort := viper.GetInt("http_port")
 	httpsPort := viper.GetInt("https_port")
 	certsDir := viper.GetString("certs_dir")
-	authToken := viper.GetString("token")
+	sharedSecret := viper.GetString("shared_secret")
 
 	// Validate inputs
 	if httpPort < 1 || httpPort > 65535 {
@@ -122,12 +123,12 @@ func main() {
 	}
 
 	// Check for required configuration
-	if authToken == "" {
-		slog.Error("Missing authentication token", "env", "USERSPACE_PORTFW_TOKEN")
+	if sharedSecret == "" {
+		slog.Error("Missing shared secret", "env", "USERSPACE_PORTFW_TOKEN")
 		os.Exit(1)
 	}
 
-	tokenChecker := creds.NewAPITokenChecker(authToken)
+	tokenChecker := creds.NewAPITokenChecker(sharedSecret)
 
 	// Create a new SOCKS5 server with the custom rule set
 	// Using github.com/things-go/go-socks5 which provides a more modern and maintained SOCKS5 implementation
@@ -174,7 +175,7 @@ func main() {
 		if err != nil {
 			slog.Error("Error serving connection", "error", err)
 		}
-	}), authToken, tokenChecker))
+	}), tokenChecker))
 
 	slog.Default().Info("Starting HTTP server", "port", httpPort)
 
