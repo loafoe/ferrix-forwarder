@@ -30,7 +30,7 @@ resource "cloudfoundry_app" "server" {
   instances    = var.server_instances
 
   environment = {
-    USERSPACE_PORTFW_TOKEN         = random_password.signing_key.result
+    USERSPACE_PORTFW_SHARED_SECRET = random_password.signing_key.result
     USERSPACE_PORTFW_ALLOWED_HOSTS = "" # Empty string to allow all hosts
   }
 

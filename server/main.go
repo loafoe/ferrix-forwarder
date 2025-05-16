@@ -124,7 +124,7 @@ func main() {
 
 	// Check for required configuration
 	if sharedSecret == "" {
-		slog.Error("Missing shared secret", "env", "USERSPACE_PORTFW_TOKEN")
+		slog.Error("Missing shared secret", "env", "USERSPACE_PORTFW_SHARED_SECRET")
 		os.Exit(1)
 	}
 
