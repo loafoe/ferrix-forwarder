@@ -241,6 +241,8 @@ func handleConnection(wsConfig *websocket.Config, conn net.Conn, authToken strin
 	for i := 0; i < 2; i++ {
 		if err := <-c; err != nil {
 			slog.Error("Copy operation failed", "error", err)
+			closeWrite(conn)
+			closeWrite(tcp)
 			return
 		}
 		// If any of the sides closes the connection, we want to close the write channel.
