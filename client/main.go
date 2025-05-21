@@ -22,7 +22,6 @@ import (
 	"golang.org/x/net/websocket"
 )
 
-
 // getTlsConfig creates and returns a TLS configuration for the client.
 // It uses the system certificate pool and sets up secure TLS options.
 func getTlsConfig(targetHost string) (*tls.Config, error) {
@@ -268,8 +267,8 @@ func startHealthServer(port int) {
 func main() {
 	// Define command line flags
 	pflag.String("listen_addr", "0.0.0.0", "The address to listen on")
-	pflag.Int("port", 8080, "The port to listen on")
-	pflag.String("socks_server", "", "The SOCKS server to connect to")
+	pflag.Int("port", 1080, "The port to listen on")
+	pflag.String("socks_server", "", "The Ferrix SOCKS server to connect to")
 	pflag.String("token", "", "The authentication token to use")
 	pflag.String("ws_scheme", "wss", "Websocket scheme to use (ws or wss)")
 	pflag.Parse()
@@ -283,7 +282,7 @@ func main() {
 
 	// Set default values
 	viper.SetDefault("listen_addr", "0.0.0.0")
-	viper.SetDefault("port", 8080)
+	viper.SetDefault("port", 1080)
 	viper.SetDefault("socks_server", "")
 	viper.SetDefault("ws_scheme", "wss")
 
