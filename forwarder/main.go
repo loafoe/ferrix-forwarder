@@ -113,7 +113,7 @@ func main() {
 					slog.Error("Copy operation failed", "error", err)
 					closeWrite(conn)
 					closeWrite(c)
-					return
+					break
 				}
 				// If any of the sides closes the connection, we want to close the write channel.
 				closeWrite(conn)
