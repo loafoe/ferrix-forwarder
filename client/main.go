@@ -103,8 +103,11 @@ func getProxiedConn(ctx context.Context, turl url.URL) (net.Conn, error) {
 
 	// Create a custom dialer that will establish the connection through the proxy
 	proxyDialer := &net.Dialer{
-		Timeout:   30 * time.Second,
-		KeepAlive: 30 * time.Second,
+		Timeout: 30 * time.Second,
+		KeepAliveConfig: net.KeepAliveConfig{
+			Enable: true,
+			Idle:   15 * time.Second,
+		},
 	}
 
 	// Create a transport that uses the proxy
