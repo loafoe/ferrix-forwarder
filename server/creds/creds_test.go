@@ -132,18 +132,18 @@ func TestAPITokenChecker_Allow(t *testing.T) {
 			expectedAllowed: false,
 		},
 		{
-			name:            "empty endpoints allows all",
+			name:            "empty endpoints allows none",
 			endpoints:       map[string][]string{},
 			requestFQDN:     "anything.com",
 			requestPort:     443,
-			expectedAllowed: true,
+			expectedAllowed: false,
 		},
 		{
-			name:            "nil endpoints allows all",
+			name:            "nil endpoints allows none",
 			endpoints:       nil,
 			requestFQDN:     "anything.com",
 			requestPort:     443,
-			expectedAllowed: true,
+			expectedAllowed: false,
 		},
 	}
 

@@ -90,8 +90,8 @@ func (j *APITokenChecker) RemoveToken(signature string) {
 // destination FQDN and port combination is in the list of allowed hosts.
 func (j *APITokenChecker) Allow(ctx context.Context, req *socks5.Request) (context.Context, bool) {
 	if j.TokenEndpoints == nil || len(j.TokenEndpoints) == 0 {
-		slog.Default().Info("allowing as allow-list is empty")
-		return ctx, true
+		slog.Default().Info("denying as allow-list is empty")
+		return ctx, false
 	}
 	fqdn := fmt.Sprintf("%s:%d", req.DestAddr.FQDN, req.DestAddr.Port)
 	for _, endpoints := range j.TokenEndpoints {
