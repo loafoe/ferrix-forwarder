@@ -341,7 +341,7 @@ func main() {
 		"ws_scheme", wsScheme)
 
 	// Start health check server
-	startHealthServer(8080)
+	startHealthServer(8090)
 
 	// Set up graceful shutdown
 	sigChan := make(chan os.Signal, 1)

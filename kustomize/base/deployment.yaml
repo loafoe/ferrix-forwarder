@@ -44,17 +44,17 @@ spec:
               containerPort: 8082
               protocol: TCP
             - name: health
-              containerPort: 8080
+              containerPort: 8090
               protocol: TCP
           readinessProbe:
             httpGet:
               path: /health
-              port: 8080
+              port: 8090
             initialDelaySeconds: 5
             periodSeconds: 10
           livenessProbe:
             httpGet:
               path: /health
-              port: 8080
+              port: 8090
             initialDelaySeconds: 15
             periodSeconds: 20
