@@ -68,9 +68,10 @@ func getWsConfig(socksServer, wsScheme string) (*websocket.Config, error) {
 }
 
 // iocopy copies data between the writer and reader, reporting any errors through the channel.
-func iocopy(dst io.Writer, src io.Reader, c chan error) {
-	_, err := io.Copy(dst, src)
+func iocopy(dst io.Writer, src io.Reader, c chan error, w chan<- int64) {
+	written, err := io.Copy(dst, src)
 	c <- err
+	w <- written
 }
 
 type closeable interface {
@@ -234,21 +235,28 @@ func handleConnection(wsConfig *websocket.Config, conn net.Conn, authToken strin
 
 	slog.Info("Connection established", "remote", conn.RemoteAddr())
 
+	up, down := make(chan int64), make(chan int64)
 	c := make(chan error, 2)
-	go iocopy(ws, conn, c)
-	go iocopy(conn, ws, c)
+	go iocopy(ws, conn, c, up)
+	go iocopy(conn, ws, c, down)
 
 	for i := 0; i < 2; i++ {
 		if err := <-c; err != nil {
 			slog.Error("Copy operation failed", "error", err)
 			closeWrite(conn)
 			closeWrite(tcp)
-			return
+			break
 		}
 		// If any of the sides closes the connection, we want to close the write channel.
 		closeWrite(conn)
 		closeWrite(tcp)
 	}
+	upBytes := <-up
+	downBytes := <-down
+	slog.Info("Connection completed",
+		"remote", conn.RemoteAddr(),
+		"bytes_up", upBytes,
+		"bytes_down", downBytes)
 }
 
 func startHealthServer(port int) {
