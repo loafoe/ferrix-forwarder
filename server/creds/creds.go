@@ -27,10 +27,10 @@ type APITokenChecker struct {
 // Valid implements socks5.CredentialStore.
 func (j *APITokenChecker) Valid(user string, password string, userAddr string) bool {
 	slog.Default().Info("validating credentials", "user", user, "password", password, "userAddr", userAddr)
-	
+
 	// TODO: Implement actual validation logic
 	// For now, just return true for any credentials
-	// 
+	//
 	// Current thinking is to use the signature as the user and the password value and then verify there is an
 	// entry in the token endpoints map as we it during the WebSocket handshake
 
@@ -58,13 +58,21 @@ func (j *APITokenChecker) AddToken(token string) (string, error) {
 	slog.Default().Info("token verified", "signature", signature, "keys", keys)
 	slog.Default().Info("adding endpoints", "signature", signature, "scopes", keys.Scopes)
 	if len(keys.Scopes) == 0 {
-		slog.Default().Info("no endpoints provided, skipping")
-		return "", nil
+		slog.Default().Info("no endpoints provided, refusing connection")
+		return "", fmt.Errorf("no endpoints provided, refusing connection")
 	}
 	if j.TokenEndpoints == nil {
 		j.TokenEndpoints = make(map[string][]string)
 	}
-	j.TokenEndpoints[signature] = keys.Scopes
+	for _, endpoint := range keys.Scopes {
+		if strings.HasPrefix(endpoint, "ep:") {
+			j.TokenEndpoints[signature] = append(j.TokenEndpoints[signature], strings.TrimPrefix(endpoint, "ep:"))
+		}
+	}
+	if len(j.TokenEndpoints[signature]) == 0 {
+		slog.Default().Info("no endpoints found in token scopes, refusing connection")
+		return "", fmt.Errorf("no endpoints found in token scopes, refusing connection")
+	}
 	slog.Default().Info("added endpoints", "signature", signature, "endpoints", endpoints)
 	return signature, nil
 }
