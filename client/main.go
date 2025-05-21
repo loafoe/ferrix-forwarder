@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"crypto/tls"
 	"crypto/x509"
 	"fmt"
@@ -85,7 +86,7 @@ func closeWrite(conn net.Conn) {
 
 // getProxiedConn attempts to establish a connection through a proxy if available.
 // It tries SOCKS5 proxies first, then falls back to HTTP proxies.
-func getProxiedConn(turl url.URL) (net.Conn, error) {
+func getProxiedConn(ctx context.Context, turl url.URL) (net.Conn, error) {
 	// We first try to get a Socks5 proxied connection. If that fails, we're moving on to http{s,}_proxy.
 	dialer := proxy.FromEnvironment()
 	if dialer != proxy.Direct {
@@ -96,7 +97,8 @@ func getProxiedConn(turl url.URL) (net.Conn, error) {
 	proxyURL, err := http.ProxyFromEnvironment(&http.Request{URL: &turl})
 	if proxyURL == nil {
 		// No proxy available, direct connection
-		return net.Dial("tcp", turl.Host)
+		var d net.Dialer
+		return d.DialContext(ctx, "tcp", turl.Host)
 	}
 
 	// Create a custom dialer that will establish the connection through the proxy
@@ -108,7 +110,7 @@ func getProxiedConn(turl url.URL) (net.Conn, error) {
 	// Create a transport that uses the proxy
 	transport := &http.Transport{
 		Proxy:               http.ProxyURL(proxyURL),
-		Dial:                proxyDialer.Dial,
+		DialContext:         proxyDialer.DialContext,
 		TLSHandshakeTimeout: 10 * time.Second,
 	}
 
@@ -118,8 +120,8 @@ func getProxiedConn(turl url.URL) (net.Conn, error) {
 		Timeout:   60 * time.Second,
 	}
 
-	// Create an HTTP CONNECT request
-	req, err := http.NewRequest(http.MethodConnect, "http://"+turl.Host, nil)
+	// Create an HTTP CONNECT request with the provided context
+	req, err := http.NewRequestWithContext(ctx, http.MethodConnect, "http://"+turl.Host, nil)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create CONNECT request: %w", err)
 	}
@@ -134,10 +136,10 @@ func getProxiedConn(turl url.URL) (net.Conn, error) {
 	var connReady sync.WaitGroup
 	connReady.Add(1)
 
-	// Replace the default transport's Dial with our own that captures the connection
-	origDial := transport.Dial
-	transport.Dial = func(network, addr string) (net.Conn, error) {
-		c, err := origDial(network, addr)
+	// Replace the default transport's DialContext with our own that captures the connection
+	origDialContext := transport.DialContext
+	transport.DialContext = func(ctx context.Context, network, addr string) (net.Conn, error) {
+		c, err := origDialContext(ctx, network, addr)
 		if err != nil {
 			connMutex.Lock()
 			connErr = err
@@ -198,7 +200,11 @@ func handleConnection(wsConfig *websocket.Config, conn net.Conn, authToken strin
 		_ = conn.Close()
 	}()
 
-	tcp, err := getProxiedConn(*wsConfig.Location)
+	// Create a context with timeout for the connection
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	tcp, err := getProxiedConn(ctx, *wsConfig.Location)
 	if err != nil {
 		slog.Error("Failed to get proxied connection", "error", err)
 		return
