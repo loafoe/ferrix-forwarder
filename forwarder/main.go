@@ -12,18 +12,6 @@ import (
 	"golang.org/x/net/proxy"
 )
 
-func pipe(src io.Reader, dst io.WriteCloser, result chan<- int64) {
-	defer func() {
-		_ = dst.Close()
-		_ = src.(io.Closer).Close()
-	}()
-	n, err := io.Copy(dst, src)
-	if err != nil {
-		slog.Error("Error during copy", "error", err)
-	}
-	result <- int64(n)
-}
-
 func main() {
 	// Define command line flags
 	pflag.String("local", "127.0.0.1:8388", "The local address to listen on")
@@ -116,8 +104,22 @@ func main() {
 				return
 			}
 			up, down := make(chan int64), make(chan int64)
-			go pipe(conn, c, up)
-			go pipe(c, conn, down)
+			ch := make(chan error, 2)
+			go iocopy(c, conn, ch, up)
+			go iocopy(conn, c, ch, down)
+
+			for i := 0; i < 2; i++ {
+				if err := <-ch; err != nil {
+					slog.Error("Copy operation failed", "error", err)
+					closeWrite(conn)
+					closeWrite(c)
+					return
+				}
+				// If any of the sides closes the connection, we want to close the write channel.
+				closeWrite(conn)
+				closeWrite(c)
+			}
+
 			upBytes := <-up
 			downBytes := <-down
 			slog.Info("Connection completed",
@@ -127,5 +129,23 @@ func main() {
 				"bytes_down", downBytes)
 			return
 		}(conn)
+	}
+}
+
+// iocopy copies data between the writer and reader, reporting any errors through the channel.
+func iocopy(dst io.Writer, src io.Reader, c chan error, w chan<- int64) {
+	written, err := io.Copy(dst, src)
+	c <- err
+	w <- written
+}
+
+type closeable interface {
+	CloseWrite() error
+}
+
+// closeWrite attempts to close the write half of a connection if supported.
+func closeWrite(conn net.Conn) {
+	if closeme, ok := conn.(closeable); ok {
+		_ = closeme.CloseWrite()
 	}
 }
