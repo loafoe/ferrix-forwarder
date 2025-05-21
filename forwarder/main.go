@@ -15,8 +15,12 @@ import (
 func pipe(src io.Reader, dst io.WriteCloser, result chan<- int64) {
 	defer func() {
 		_ = dst.Close()
+		_ = src.(io.Closer).Close()
 	}()
-	n, _ := io.Copy(dst, src)
+	n, err := io.Copy(dst, src)
+	if err != nil {
+		slog.Error("Error during copy", "error", err)
+	}
 	result <- int64(n)
 }
 
@@ -95,9 +99,13 @@ func main() {
 			}
 
 			dailer, err := proxy.SOCKS5("tcp", socks5, auth, &net.Dialer{
-				Timeout:   60 * time.Second,
-				KeepAlive: 30 * time.Second,
+				Timeout: 60 * time.Second,
+				KeepAliveConfig: net.KeepAliveConfig{
+					Enable: true,
+					Idle:   15 * time.Second,
+				},
 			})
+
 			if err != nil {
 				slog.Warn("Failed to initialize SOCKS5 proxy", "error", err)
 				return
