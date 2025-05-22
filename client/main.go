@@ -234,6 +234,7 @@ func main() {
 	pflag.Int("port", 1080, "The port to listen on for incoming connections")
 	pflag.String("socks_server", "", "The Ferrix tunnel server address (host:port)")
 	pflag.String("token", "", "Authentication token for the tunnel service")
+	pflag.String("token_file", "", "Path to a file containing the authentication token")
 	pflag.String("ws_scheme", "wss", "WebSocket scheme to use (ws for unencrypted, wss for TLS encrypted)")
 	pflag.Int("health_port", 8090, "Port for the health/monitoring HTTP server")
 
@@ -254,6 +255,8 @@ func main() {
 	viper.SetDefault("listen_addr", "0.0.0.0")
 	viper.SetDefault("port", 1080)
 	viper.SetDefault("socks_server", "")
+	viper.SetDefault("token", "")
+	viper.SetDefault("token_file", "")
 	viper.SetDefault("ws_scheme", "wss")
 	viper.SetDefault("forward_mode", false)
 	viper.SetDefault("forward_target", "")
@@ -264,6 +267,7 @@ func main() {
 	port := viper.GetInt("port")
 	socksServer := viper.GetString("socks_server")
 	authToken := viper.GetString("token")
+	tokenFile := viper.GetString("token_file")
 	wsScheme := viper.GetString("ws_scheme")
 	forwardMode := viper.GetBool("forward_mode")
 	forwardTarget := viper.GetString("forward_target")
@@ -280,8 +284,36 @@ func main() {
 		os.Exit(1)
 	}
 
+	// Handle token from file if specified
+	if tokenFile != "" {
+		// Check if the file exists
+		if _, err := os.Stat(tokenFile); os.IsNotExist(err) {
+			slog.Error("Token file does not exist", "file", tokenFile)
+			os.Exit(1)
+		}
+
+		// Read the token file
+		tokenBytes, err := os.ReadFile(tokenFile)
+		if err != nil {
+			slog.Error("Failed to read token file", "file", tokenFile, "error", err)
+			os.Exit(1)
+		}
+
+		// Trim whitespace and newlines from the token
+		authToken = strings.TrimSpace(string(tokenBytes))
+
+		// Verify the token is not empty
+		if authToken == "" {
+			slog.Error("Token file is empty", "file", tokenFile)
+			os.Exit(1)
+		}
+
+		slog.Info("Read authentication token from file", "file", tokenFile)
+	}
+
+	// Verify we have a token from either direct input or file
 	if authToken == "" {
-		slog.Error("Missing authentication token", "env", "USERSPACE_PORTFW_TOKEN")
+		slog.Error("Missing authentication token", "env", "USERSPACE_PORTFW_TOKEN or --token-file")
 		os.Exit(1)
 	}
 

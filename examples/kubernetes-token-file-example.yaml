@@ -1,0 +1,77 @@
+apiVersion: v1
+kind: Secret
+metadata:
+  name: ferrix-auth-token
+type: Opaque
+stringData:
+  token.txt: "your-auth-token-goes-here"
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: ferrix-client
+  labels:
+    app: ferrix-client
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: ferrix-client
+  template:
+    metadata:
+      labels:
+        app: ferrix-client
+    spec:
+      containers:
+      - name: ferrix-client
+        image: ferrix-forwarder-client:latest
+        imagePullPolicy: IfNotPresent
+        ports:
+        - containerPort: 1080
+          name: socks
+        - containerPort: 8090
+          name: health
+        env:
+        - name: USERSPACE_PORTFW_SOCKS_SERVER
+          value: "tunnel.example.com:8080"
+        - name: USERSPACE_PORTFW_WS_SCHEME
+          value: "wss"
+        volumeMounts:
+        - name: token-volume
+          mountPath: "/app/tokens"
+          readOnly: true
+        args:
+        - "--token_file=/app/tokens/token.txt"
+        livenessProbe:
+          httpGet:
+            path: /health
+            port: 8090
+          initialDelaySeconds: 30
+          periodSeconds: 10
+        resources:
+          limits:
+            cpu: 200m
+            memory: 256Mi
+          requests:
+            cpu: 100m
+            memory: 128Mi
+      volumes:
+      - name: token-volume
+        secret:
+          secretName: ferrix-auth-token
+          defaultMode: 0600
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: ferrix-client
+spec:
+  selector:
+    app: ferrix-client
+  ports:
+  - port: 1080
+    targetPort: socks
+    name: socks
+  - port: 8090
+    targetPort: health
+    name: health

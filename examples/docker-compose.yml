@@ -1,0 +1,47 @@
+version: '3.8'
+
+services:
+  # Client in SOCKS5 proxy mode
+  ferrix-client-socks:
+    build:
+      context: ./client
+    ports:
+      - "1080:1080"  # SOCKS5 proxy port
+      - "8090:8090"  # Health/monitoring port
+    environment:
+      - USERSPACE_PORTFW_SOCKS_SERVER=tunnel.example.com:8080
+      - USERSPACE_PORTFW_WS_SCHEME=wss
+    volumes:
+      - ./tokens:/app/tokens:ro  # Mount tokens directory as read-only
+    command: --token_file=/app/tokens/auth_token.txt
+    restart: unless-stopped
+
+  # Client in direct forwarding mode
+  ferrix-client-forward:
+    build:
+      context: ./client
+    ports:
+      - "5432:5432"  # PostgreSQL port being forwarded
+      - "8091:8090"  # Health/monitoring port (on different host port)
+    environment:
+      - USERSPACE_PORTFW_SOCKS_SERVER=tunnel.example.com:8080
+      - USERSPACE_PORTFW_WS_SCHEME=wss
+      - USERSPACE_PORTFW_FORWARD_MODE=true
+      - USERSPACE_PORTFW_FORWARD_TARGET=destination.example.com:5432
+      - USERSPACE_PORTFW_PORT=5432
+    volumes:
+      - ./tokens:/app/tokens:ro  # Mount tokens directory as read-only
+    command: --token_file=/app/tokens/auth_token.txt
+    restart: unless-stopped
+
+  # Alternate approach using environment variable for token
+  ferrix-client-env:
+    build:
+      context: ./client
+    ports:
+      - "1081:1080"  # SOCKS5 proxy port on alternate host port
+      - "8092:8090"  # Health/monitoring port on different host port
+    environment:
+      - USERSPACE_PORTFW_SOCKS_SERVER=tunnel.example.com:8080
+      - AUTH_TOKEN=your_auth_token_here  # Token passed via environment
+    restart: unless-stopped

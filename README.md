@@ -46,8 +46,35 @@ Access these endpoints at: `http://localhost:8090/stats`
 --port int                The port to listen on for incoming connections (default 1080)
 --socks_server string     The Ferrix tunnel server address (host:port)
 --token string            Authentication token for the tunnel service
+--token_file string       Path to a file containing the authentication token
 --ws_scheme string        WebSocket scheme to use (ws for unencrypted, wss for TLS encrypted) (default "wss")
 ```
+
+### Using Token Files
+
+For improved security, you can store the authentication token in a file instead of providing it directly on the command line:
+
+```bash
+# Create a token file with restricted permissions
+echo "your_auth_token" > token.txt
+chmod 600 token.txt
+
+# Run the client using the token file
+./client --socks_server=tunnel.example.com:8080 --token_file=token.txt
+```
+
+This approach provides several security benefits:
+- Avoids storing sensitive tokens in command-line arguments (which can be visible in process listings)
+- Prevents tokens from being recorded in shell history
+- Enables proper file permission controls (chmod 600)
+- Works well with container secrets mounting and Kubernetes secret volumes
+
+For container environments, you can use:
+```bash
+docker run -v /path/to/tokens:/tokens ferrix-forwarder-client --token_file=/tokens/my_token
+```
+
+In Kubernetes, you can mount a Secret as a volume to the pod and reference it with `--token_file`.
 
 ## Name
 
