@@ -259,6 +259,183 @@ func handleConnection(wsConfig *websocket.Config, conn net.Conn, authToken strin
 		"bytes_down", downBytes)
 }
 
+// handleDirectForwardConnection manages a client connection in direct forwarding mode,
+// connecting directly to the target server through the SOCKS server connection.
+func handleDirectForwardConnection(wsConfig *websocket.Config, conn net.Conn, authToken, targetAddr string) {
+	defer func() {
+		_ = conn.Close()
+	}()
+
+	// Create a context with timeout for the connection
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	tcp, err := getProxiedConn(ctx, *wsConfig.Location)
+	if err != nil {
+		slog.Error("Failed to get proxied connection", "error", err)
+		return
+	}
+
+	// Setup TLS client if using wss scheme
+	if wsConfig.Location.Scheme == "wss" {
+		tcp = tls.Client(tcp, wsConfig.TlsConfig)
+	}
+
+	// Add authentication header
+	headers := http.Header{}
+	headers.Set("X-STL-Auth", authToken)
+	wsConfig.Header = headers
+
+	ws, err := websocket.NewClient(wsConfig, tcp)
+	if err != nil {
+		slog.Error("Failed to create websocket client", "error", err)
+		return
+	}
+	defer func() {
+		_ = ws.Close()
+	}()
+
+	slog.Info("Connection established to SOCKS server", "remote", conn.RemoteAddr())
+
+	// Write SOCKS5 handshake
+	// SOCKS version 5, 1 authentication method (no auth=0)
+	_, err = ws.Write([]byte{0x05, 0x01, 0x00})
+	if err != nil {
+		slog.Error("Failed to write SOCKS handshake", "error", err)
+		return
+	}
+
+	// Read server response
+	response := make([]byte, 2)
+	_, err = ws.Read(response)
+	if err != nil {
+		slog.Error("Failed to read SOCKS handshake response", "error", err)
+		return
+	}
+	if response[0] != 0x05 || response[1] != 0x00 {
+		slog.Error("Invalid SOCKS handshake response", "response", response)
+		return
+	}
+
+	// Parse target address
+	host, portStr, err := net.SplitHostPort(targetAddr)
+	if err != nil {
+		slog.Error("Invalid target address", "target", targetAddr, "error", err)
+		return
+	}
+	port, err := net.LookupPort("tcp", portStr)
+	if err != nil {
+		slog.Error("Invalid port in target address", "port", portStr, "error", err)
+		return
+	}
+
+	// Create SOCKS5 connect request
+	request := []byte{
+		0x05, // SOCKS version
+		0x01, // Command: Connect
+		0x00, // Reserved
+	}
+
+	// Add address type and address
+	ip := net.ParseIP(host)
+	if ip == nil {
+		// Domain name
+		request = append(request, 0x03)            // Type: Domain name
+		request = append(request, byte(len(host))) // Domain length
+		request = append(request, []byte(host)...) // Domain
+	} else if ip.To4() != nil {
+		// IPv4
+		request = append(request, 0x01)        // Type: IPv4
+		request = append(request, ip.To4()...) // IPv4 address
+	} else {
+		// IPv6
+		request = append(request, 0x04)         // Type: IPv6
+		request = append(request, ip.To16()...) // IPv6 address
+	}
+
+	// Add port (big endian)
+	request = append(request, byte(port>>8), byte(port))
+
+	// Send connect request
+	_, err = ws.Write(request)
+	if err != nil {
+		slog.Error("Failed to write SOCKS connect request", "error", err)
+		return
+	}
+
+	// Read connect response
+	response = make([]byte, 4)
+	if _, err = io.ReadFull(ws, response); err != nil {
+		slog.Error("Failed to read SOCKS connect response", "error", err)
+		return
+	}
+
+	if response[0] != 0x05 {
+		slog.Error("Invalid SOCKS response version", "version", response[0])
+		return
+	}
+
+	if response[1] != 0x00 {
+		slog.Error("SOCKS connect failed", "error", response[1])
+		return
+	}
+
+	// Skip the bound address in the response
+	switch response[3] {
+	case 0x01: // IPv4
+		if _, err = io.ReadFull(ws, make([]byte, 4+2)); err != nil {
+			slog.Error("Failed to read IPv4 bound address", "error", err)
+			return
+		}
+	case 0x03: // Domain name
+		lenByte := make([]byte, 1)
+		if _, err = io.ReadFull(ws, lenByte); err != nil {
+			slog.Error("Failed to read domain length", "error", err)
+			return
+		}
+		if _, err = io.ReadFull(ws, make([]byte, int(lenByte[0])+2)); err != nil {
+			slog.Error("Failed to read domain bound address", "error", err)
+			return
+		}
+	case 0x04: // IPv6
+		if _, err = io.ReadFull(ws, make([]byte, 16+2)); err != nil {
+			slog.Error("Failed to read IPv6 bound address", "error", err)
+			return
+		}
+	default:
+		slog.Error("Invalid address type in SOCKS response", "type", response[3])
+		return
+	}
+
+	slog.Info("SOCKS connection established to target", "target", targetAddr)
+
+	// Start data forwarding
+	up, down := make(chan int64), make(chan int64)
+	c := make(chan error, 2)
+	go iocopy(ws, conn, c, up)
+	go iocopy(conn, ws, c, down)
+
+	for i := 0; i < 2; i++ {
+		if err := <-c; err != nil {
+			slog.Error("Copy operation failed", "error", err)
+			closeWrite(conn)
+			closeWrite(tcp)
+			break
+		}
+		// If any of the sides closes the connection, we want to close the write channel.
+		closeWrite(conn)
+		closeWrite(tcp)
+	}
+
+	upBytes := <-up
+	downBytes := <-down
+	slog.Info("Connection completed",
+		"remote", conn.RemoteAddr(),
+		"target", targetAddr,
+		"bytes_up", upBytes,
+		"bytes_down", downBytes)
+}
+
 func startHealthServer(port int) {
 	// Define HTTP endpoints
 	http.HandleFunc("/health", func(w http.ResponseWriter, r *http.Request) {
@@ -290,6 +467,11 @@ func main() {
 	pflag.String("socks_server", "", "The Ferrix SOCKS server to connect to")
 	pflag.String("token", "", "The authentication token to use")
 	pflag.String("ws_scheme", "wss", "Websocket scheme to use (ws or wss)")
+
+	// Direct forwarding mode flags
+	pflag.Bool("forward_mode", false, "Enable direct forwarding mode instead of SOCKS proxy mode")
+	pflag.String("forward_target", "", "The target address to forward traffic to when in forwarding mode")
+
 	pflag.Parse()
 
 	// Setup configuration via viper
@@ -304,6 +486,8 @@ func main() {
 	viper.SetDefault("port", 1080)
 	viper.SetDefault("socks_server", "")
 	viper.SetDefault("ws_scheme", "wss")
+	viper.SetDefault("forward_mode", false)
+	viper.SetDefault("forward_target", "")
 
 	// Get configuration values
 	listenAddr := viper.GetString("listen_addr")
@@ -311,6 +495,8 @@ func main() {
 	socksServer := viper.GetString("socks_server")
 	authToken := viper.GetString("token")
 	wsScheme := viper.GetString("ws_scheme")
+	forwardMode := viper.GetBool("forward_mode")
+	forwardTarget := viper.GetString("forward_target")
 
 	// Validate inputs
 	if port < 1 || port > 65535 {
@@ -330,6 +516,12 @@ func main() {
 
 	if wsScheme != "ws" && wsScheme != "wss" {
 		slog.Error("Invalid websocket scheme", "scheme", wsScheme)
+		os.Exit(1)
+	}
+
+	// Check if we're in direct forwarding mode
+	if forwardMode && forwardTarget == "" {
+		slog.Error("Forward mode enabled but no target specified", "env", "USERSPACE_PORTFW_FORWARD_TARGET")
 		os.Exit(1)
 	}
 
@@ -380,6 +572,10 @@ func main() {
 			slog.Error("Connection accept error", "error", err)
 			continue
 		}
-		go handleConnection(wsConfig, conn, authToken)
+		if forwardMode {
+			go handleDirectForwardConnection(wsConfig, conn, authToken, forwardTarget)
+		} else {
+			go handleConnection(wsConfig, conn, authToken)
+		}
 	}
 }
