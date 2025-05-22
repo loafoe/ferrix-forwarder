@@ -10,7 +10,6 @@ jobs:
     outputs:
       server: ${{ steps.filter.outputs.server }}
       client: ${{ steps.filter.outputs.client }}
-      forwarder: ${{ steps.filter.outputs.forwarder }}
     steps:
       - uses: actions/checkout@v4
       - uses: dorny/paths-filter@v3
@@ -23,13 +22,10 @@ jobs:
             client:
               - 'client/**'
               - '.github/workflows/docker.yml'
-            forwarder:
-              - 'forwarder/**'
-              - '.github/workflows/docker.yml'
 
   docker:
     needs: check_changes
-    if: ${{ needs.check_changes.outputs.server == 'true' || needs.check_changes.outputs.client == 'true' || needs.check_changes.outputs.forwarder == 'true' }}
+    if: ${{ needs.check_changes.outputs.server == 'true' || needs.check_changes.outputs.client == 'true' }}
     runs-on: ubuntu-latest
     permissions:
       packages: write
@@ -40,8 +36,6 @@ jobs:
             should_run: ${{ needs.check_changes.outputs.server == 'true' }}
           - component: client
             should_run: ${{ needs.check_changes.outputs.client == 'true' }}
-          - component: forwarder
-            should_run: ${{ needs.check_changes.outputs.forwarder == 'true' }}
     steps:
       - name: Set up QEMU
         uses: docker/setup-qemu-action@v3
