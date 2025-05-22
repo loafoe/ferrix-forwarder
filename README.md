@@ -8,11 +8,15 @@ ferrix-forwarder provides two main operating modes:
 
 ### 1. SOCKS5 Proxy Mode (default)
 
-Acts as a standard SOCKS5 proxy, requiring clients to connect using the SOCKS5 protocol.
+Acts as a standard SOCKS5 proxy, requiring clients to connect using the SOCKS5 protocol with username/password authentication.
 
 ```bash
 ./client --socks_server=tunnel.example.com:8080 --token=your_auth_token
 ```
+
+When connecting to the proxy, clients need to use the following authentication:
+- Username: `foo`
+- Password: `bar`
 
 ### 2. Transparent Forwarding Mode
 
@@ -22,7 +26,7 @@ Provides a direct TCP forwarding experience that hides all SOCKS5 and WebSocket 
 ./client --forward_mode --forward_target=destination.example.com:5432 --port=5432 --socks_server=tunnel.example.com:8080 --token=your_auth_token
 ```
 
-In transparent forwarding mode, any connection to the local port will be securely forwarded to the specified target through the tunnel server.
+In transparent forwarding mode, any connection to the local port will be securely forwarded to the specified target through the tunnel server. The client automatically handles all the SOCKS5 authentication (using username "foo" and password "bar") behind the scenes, so the consumer application doesn't need to implement any special protocol.
 
 ### Connection Statistics
 
@@ -34,7 +38,7 @@ Access these endpoints at: `http://localhost:8090/stats`
 
 ### Command Line Options
 
-```
+```shell
 --forward_mode            Enable transparent port forwarding mode (hides SOCKS5 protocol)
 --forward_target string   Target address to forward traffic to (host:port)
 --health_port int         Port for the health/monitoring HTTP server (default 8090)

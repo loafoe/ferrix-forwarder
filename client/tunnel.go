@@ -63,7 +63,7 @@ func establishSecureTunnel(ctx context.Context, wsConfig *websocket.Config, auth
 	}
 
 	// Establish connection to target through the tunnel
-	// (Implementation details hidden from the caller)
+	// This performs SOCKS5 handshake with username/password authentication
 	if err := setupSocks5Connection(ws, targetAddr); err != nil {
 		ws.Close()
 		return nil, fmt.Errorf("failed to connect to %s: %w", targetAddr, err)
@@ -74,10 +74,16 @@ func establishSecureTunnel(ctx context.Context, wsConfig *websocket.Config, auth
 }
 
 // setupSocks5Connection handles the SOCKS5 protocol handshake and connect request
-// without exposing the protocol details to the caller
+// without exposing the protocol details to the caller.
+// It uses username/password authentication with credentials:
+// - Username: "foo"
+// - Password: "bar"
 func setupSocks5Connection(ws io.ReadWriter, targetAddr string) error {
-	// Write SOCKS5 handshake (version 5, 1 auth method, no auth)
-	if _, err := ws.Write([]byte{0x05, 0x01, 0x00}); err != nil {
+	// Write SOCKS5 handshake (version 5, 1 auth method, username/password auth)
+	// 0x05: SOCKS version 5
+	// 0x01: Number of authentication methods supported
+	// 0x02: Username/password authentication method
+	if _, err := ws.Write([]byte{0x05, 0x01, 0x02}); err != nil {
 		return fmt.Errorf("connection setup failed: %w", err)
 	}
 
@@ -86,8 +92,37 @@ func setupSocks5Connection(ws io.ReadWriter, targetAddr string) error {
 	if _, err := io.ReadFull(ws, response); err != nil {
 		return fmt.Errorf("connection handshake failed: %w", err)
 	}
-	if response[0] != 0x05 || response[1] != 0x00 {
-		return fmt.Errorf("connection authentication failed")
+
+	// Verify server supports our auth method
+	if response[0] != 0x05 || response[1] != 0x02 {
+		return fmt.Errorf("server doesn't support username/password authentication")
+	}
+
+	// Perform username/password authentication
+	// Username "foo" and password "bar"
+	username, password := "foo", "bar"
+
+	// Format: version 1, username length, username, password length, password
+	authRequest := []byte{0x01}
+	authRequest = append(authRequest, byte(len(username)))
+	authRequest = append(authRequest, []byte(username)...)
+	authRequest = append(authRequest, byte(len(password)))
+	authRequest = append(authRequest, []byte(password)...)
+
+	// Send auth credentials
+	if _, err := ws.Write(authRequest); err != nil {
+		return fmt.Errorf("authentication request failed: %w", err)
+	}
+
+	// Read auth response
+	authResponse := make([]byte, 2)
+	if _, err := io.ReadFull(ws, authResponse); err != nil {
+		return fmt.Errorf("authentication response read failed: %w", err)
+	}
+
+	// Check auth success (version 1, status 0 = success)
+	if authResponse[0] != 0x01 || authResponse[1] != 0x00 {
+		return fmt.Errorf("authentication failed, server returned status: %d", authResponse[1])
 	}
 
 	// Parse target address
