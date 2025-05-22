@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/tls"
 	"crypto/x509"
+	"encoding/json"
 	"fmt"
 	"io"
 	"log/slog"
@@ -22,6 +23,9 @@ import (
 	"golang.org/x/net/proxy"
 	"golang.org/x/net/websocket"
 )
+
+// Global connection statistics tracker
+var connectionStats *ConnectionStats
 
 // getTlsConfig creates and returns a TLS configuration for the client.
 // It uses the system certificate pool and sets up secure TLS options.
@@ -204,6 +208,13 @@ func handleConnection(wsConfig *websocket.Config, conn net.Conn, authToken strin
 		_ = conn.Close()
 	}()
 
+	// Track connection in stats
+	connectionStats.ConnectionStarted()
+	defer connectionStats.ConnectionEnded()
+
+	// Log connection attempt with source info
+	slog.Info("Incoming SOCKS connection", "source", conn.RemoteAddr().String())
+
 	// Create a context with timeout for the connection
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
@@ -211,6 +222,7 @@ func handleConnection(wsConfig *websocket.Config, conn net.Conn, authToken strin
 	tcp, err := getProxiedConn(ctx, *wsConfig.Location)
 	if err != nil {
 		slog.Error("Failed to get proxied connection", "error", err)
+		connectionStats.ConnectionFailed()
 		return
 	}
 
@@ -227,13 +239,15 @@ func handleConnection(wsConfig *websocket.Config, conn net.Conn, authToken strin
 	ws, err := websocket.NewClient(wsConfig, tcp)
 	if err != nil {
 		slog.Error("Failed to create websocket client", "error", err)
+		connectionStats.ConnectionFailed()
 		return
 	}
 	defer func() {
 		_ = ws.Close()
 	}()
 
-	slog.Info("Connection established", "remote", conn.RemoteAddr())
+	slog.Info("Connection established", "source", conn.RemoteAddr().String())
+	connectionStats.ConnectionSuccess()
 
 	up, down := make(chan int64), make(chan int64)
 	c := make(chan error, 2)
@@ -242,7 +256,9 @@ func handleConnection(wsConfig *websocket.Config, conn net.Conn, authToken strin
 
 	for i := 0; i < 2; i++ {
 		if err := <-c; err != nil {
-			slog.Error("Copy operation failed", "error", err)
+			if err != io.EOF {
+				slog.Debug("Connection copy operation ended", "error", err)
+			}
 			closeWrite(conn)
 			closeWrite(tcp)
 			break
@@ -251,187 +267,87 @@ func handleConnection(wsConfig *websocket.Config, conn net.Conn, authToken strin
 		closeWrite(conn)
 		closeWrite(tcp)
 	}
+
+	// Record statistics
 	upBytes := <-up
 	downBytes := <-down
+	connectionStats.AddBytesTransferred(upBytes + downBytes)
+
 	slog.Info("Connection completed",
-		"remote", conn.RemoteAddr(),
+		"source", conn.RemoteAddr().String(),
 		"bytes_up", upBytes,
 		"bytes_down", downBytes)
 }
 
 // handleDirectForwardConnection manages a client connection in direct forwarding mode,
-// connecting directly to the target server through the SOCKS server connection.
+// establishing a transparent tunnel to the target server through the SOCKS server connection.
 func handleDirectForwardConnection(wsConfig *websocket.Config, conn net.Conn, authToken, targetAddr string) {
 	defer func() {
 		_ = conn.Close()
 	}()
 
+	// Track connection in stats
+	connectionStats.ConnectionStarted()
+	defer connectionStats.ConnectionEnded()
+
+	// Log connection attempt with source info
+	slog.Info("Incoming connection",
+		"source", conn.RemoteAddr().String(),
+		"destination", targetAddr)
+
 	// Create a context with timeout for the connection
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 
-	tcp, err := getProxiedConn(ctx, *wsConfig.Location)
+	// Establish secure tunnel to the target
+	// This hides all the WebSocket and SOCKS5 protocol details
+	tunnel, err := establishSecureTunnel(ctx, wsConfig, authToken, targetAddr)
 	if err != nil {
-		slog.Error("Failed to get proxied connection", "error", err)
+		// Log a user-friendly error message
+		logConnectionError(err, targetAddr)
+		connectionStats.ConnectionFailed()
 		return
 	}
+	defer tunnel.Close()
 
-	// Setup TLS client if using wss scheme
-	if wsConfig.Location.Scheme == "wss" {
-		tcp = tls.Client(tcp, wsConfig.TlsConfig)
-	}
+	// Connection successfully established
+	slog.Info("Connection established",
+		"source", conn.RemoteAddr().String(),
+		"destination", targetAddr)
+	connectionStats.ConnectionSuccess()
 
-	// Add authentication header
-	headers := http.Header{}
-	headers.Set("X-STL-Auth", authToken)
-	wsConfig.Header = headers
-
-	ws, err := websocket.NewClient(wsConfig, tcp)
-	if err != nil {
-		slog.Error("Failed to create websocket client", "error", err)
-		return
-	}
-	defer func() {
-		_ = ws.Close()
-	}()
-
-	slog.Info("Connection established to SOCKS server", "remote", conn.RemoteAddr())
-
-	// Write SOCKS5 handshake
-	// SOCKS version 5, 1 authentication method (no auth=0)
-	_, err = ws.Write([]byte{0x05, 0x01, 0x00})
-	if err != nil {
-		slog.Error("Failed to write SOCKS handshake", "error", err)
-		return
-	}
-
-	// Read server response
-	response := make([]byte, 2)
-	_, err = ws.Read(response)
-	if err != nil {
-		slog.Error("Failed to read SOCKS handshake response", "error", err)
-		return
-	}
-	if response[0] != 0x05 || response[1] != 0x00 {
-		slog.Error("Invalid SOCKS handshake response", "response", response)
-		return
-	}
-
-	// Parse target address
-	host, portStr, err := net.SplitHostPort(targetAddr)
-	if err != nil {
-		slog.Error("Invalid target address", "target", targetAddr, "error", err)
-		return
-	}
-	port, err := net.LookupPort("tcp", portStr)
-	if err != nil {
-		slog.Error("Invalid port in target address", "port", portStr, "error", err)
-		return
-	}
-
-	// Create SOCKS5 connect request
-	request := []byte{
-		0x05, // SOCKS version
-		0x01, // Command: Connect
-		0x00, // Reserved
-	}
-
-	// Add address type and address
-	ip := net.ParseIP(host)
-	if ip == nil {
-		// Domain name
-		request = append(request, 0x03)            // Type: Domain name
-		request = append(request, byte(len(host))) // Domain length
-		request = append(request, []byte(host)...) // Domain
-	} else if ip.To4() != nil {
-		// IPv4
-		request = append(request, 0x01)        // Type: IPv4
-		request = append(request, ip.To4()...) // IPv4 address
-	} else {
-		// IPv6
-		request = append(request, 0x04)         // Type: IPv6
-		request = append(request, ip.To16()...) // IPv6 address
-	}
-
-	// Add port (big endian)
-	request = append(request, byte(port>>8), byte(port))
-
-	// Send connect request
-	_, err = ws.Write(request)
-	if err != nil {
-		slog.Error("Failed to write SOCKS connect request", "error", err)
-		return
-	}
-
-	// Read connect response
-	response = make([]byte, 4)
-	if _, err = io.ReadFull(ws, response); err != nil {
-		slog.Error("Failed to read SOCKS connect response", "error", err)
-		return
-	}
-
-	if response[0] != 0x05 {
-		slog.Error("Invalid SOCKS response version", "version", response[0])
-		return
-	}
-
-	if response[1] != 0x00 {
-		slog.Error("SOCKS connect failed", "error", response[1])
-		return
-	}
-
-	// Skip the bound address in the response
-	switch response[3] {
-	case 0x01: // IPv4
-		if _, err = io.ReadFull(ws, make([]byte, 4+2)); err != nil {
-			slog.Error("Failed to read IPv4 bound address", "error", err)
-			return
-		}
-	case 0x03: // Domain name
-		lenByte := make([]byte, 1)
-		if _, err = io.ReadFull(ws, lenByte); err != nil {
-			slog.Error("Failed to read domain length", "error", err)
-			return
-		}
-		if _, err = io.ReadFull(ws, make([]byte, int(lenByte[0])+2)); err != nil {
-			slog.Error("Failed to read domain bound address", "error", err)
-			return
-		}
-	case 0x04: // IPv6
-		if _, err = io.ReadFull(ws, make([]byte, 16+2)); err != nil {
-			slog.Error("Failed to read IPv6 bound address", "error", err)
-			return
-		}
-	default:
-		slog.Error("Invalid address type in SOCKS response", "type", response[3])
-		return
-	}
-
-	slog.Info("SOCKS connection established to target", "target", targetAddr)
-
-	// Start data forwarding
+	// Start data forwarding using abstracted tunnel
 	up, down := make(chan int64), make(chan int64)
 	c := make(chan error, 2)
-	go iocopy(ws, conn, c, up)
-	go iocopy(conn, ws, c, down)
+	go iocopy(tunnel, conn, c, up)
+	go iocopy(conn, tunnel, c, down)
 
+	// Wait for either side to close the connection
 	for i := 0; i < 2; i++ {
 		if err := <-c; err != nil {
-			slog.Error("Copy operation failed", "error", err)
+			if err != io.EOF {
+				slog.Debug("Connection copy operation ended", "error", err)
+			}
 			closeWrite(conn)
-			closeWrite(tcp)
+			if closer, ok := tunnel.(closeable); ok {
+				_ = closer.CloseWrite()
+			}
 			break
 		}
-		// If any of the sides closes the connection, we want to close the write channel.
 		closeWrite(conn)
-		closeWrite(tcp)
+		if closer, ok := tunnel.(closeable); ok {
+			_ = closer.CloseWrite()
+		}
 	}
 
+	// Record statistics
 	upBytes := <-up
 	downBytes := <-down
+	connectionStats.AddBytesTransferred(upBytes + downBytes)
+
 	slog.Info("Connection completed",
-		"remote", conn.RemoteAddr(),
-		"target", targetAddr,
+		"source", conn.RemoteAddr().String(),
+		"destination", targetAddr,
 		"bytes_up", upBytes,
 		"bytes_down", downBytes)
 }
@@ -444,33 +360,58 @@ func startHealthServer(port int) {
 		w.Write([]byte(`{"status":"UP"}`))
 	})
 
-	// Create a simple HTTP server
+	// Add stats endpoint to monitor connection metrics
+	http.HandleFunc("/stats", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+
+		// Convert stats to JSON
+		stats := connectionStats.GetStats()
+		jsonData, err := json.Marshal(stats)
+		if err != nil {
+			w.WriteHeader(http.StatusInternalServerError)
+			w.Write([]byte(`{"error":"Failed to generate statistics"}`))
+			return
+		}
+
+		w.WriteHeader(http.StatusOK)
+		w.Write(jsonData)
+	})
+
+	// Create a simple HTTP server with reasonable timeouts
 	server := &http.Server{
 		Addr:         fmt.Sprintf(":%d", port),
 		ReadTimeout:  10 * time.Second,
 		WriteTimeout: 10 * time.Second,
+		IdleTimeout:  60 * time.Second,
 	}
 
 	// Start the HTTP server in a goroutine
 	go func() {
-		slog.Info("Starting health check server", "port", port)
+		slog.Info("Starting monitoring server",
+			"port", port,
+			"endpoints", []string{"/health", "/stats"})
+
 		if err := server.ListenAndServe(); err != nil && err != http.ErrServerClosed {
-			slog.Error("Health check server error", "error", err)
+			slog.Error("Monitoring server error", "error", err)
 		}
 	}()
 }
 
 func main() {
-	// Define command line flags
-	pflag.String("listen_addr", "0.0.0.0", "The address to listen on")
-	pflag.Int("port", 1080, "The port to listen on")
-	pflag.String("socks_server", "", "The Ferrix SOCKS server to connect to")
-	pflag.String("token", "", "The authentication token to use")
-	pflag.String("ws_scheme", "wss", "Websocket scheme to use (ws or wss)")
+	// Initialize connection statistics
+	connectionStats = NewConnectionStats()
+
+	// Define command line flags with user-friendly descriptions
+	pflag.String("listen_addr", "0.0.0.0", "The address to listen on for incoming connections")
+	pflag.Int("port", 1080, "The port to listen on for incoming connections")
+	pflag.String("socks_server", "", "The Ferrix tunnel server address (host:port)")
+	pflag.String("token", "", "Authentication token for the tunnel service")
+	pflag.String("ws_scheme", "wss", "WebSocket scheme to use (ws for unencrypted, wss for TLS encrypted)")
+	pflag.Int("health_port", 8090, "Port for the health/monitoring HTTP server")
 
 	// Direct forwarding mode flags
-	pflag.Bool("forward_mode", false, "Enable direct forwarding mode instead of SOCKS proxy mode")
-	pflag.String("forward_target", "", "The target address to forward traffic to when in forwarding mode")
+	pflag.Bool("forward_mode", false, "Enable transparent port forwarding mode (hides SOCKS5 protocol)")
+	pflag.String("forward_target", "", "Target address to forward traffic to (host:port)")
 
 	pflag.Parse()
 
@@ -488,6 +429,7 @@ func main() {
 	viper.SetDefault("ws_scheme", "wss")
 	viper.SetDefault("forward_mode", false)
 	viper.SetDefault("forward_target", "")
+	viper.SetDefault("health_port", 8090)
 
 	// Get configuration values
 	listenAddr := viper.GetString("listen_addr")
@@ -497,6 +439,7 @@ func main() {
 	wsScheme := viper.GetString("ws_scheme")
 	forwardMode := viper.GetBool("forward_mode")
 	forwardTarget := viper.GetString("forward_target")
+	healthPort := viper.GetInt("health_port")
 
 	// Validate inputs
 	if port < 1 || port > 65535 {
@@ -543,10 +486,15 @@ func main() {
 		"listen_addr", listenAddr,
 		"port", port,
 		"socks_server", socksServer,
-		"ws_scheme", wsScheme)
+		"ws_scheme", wsScheme,
+		"mode", map[bool]string{true: "transparent forwarding", false: "SOCKS5 proxy"}[forwardMode])
 
-	// Start health check server
-	startHealthServer(8090)
+	if forwardMode {
+		slog.Info("Forwarding mode enabled", "target", forwardTarget)
+	}
+
+	// Start monitoring server
+	startHealthServer(healthPort)
 
 	// Set up graceful shutdown
 	sigChan := make(chan os.Signal, 1)
