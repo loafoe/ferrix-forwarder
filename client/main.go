@@ -240,7 +240,7 @@ func main() {
 	pflag.Int("health_port", 8090, "Port for the health/monitoring HTTP server")
 
 	// Direct forwarding mode flags
-	pflag.Bool("forward_mode", false, "Enable transparent port forwarding mode (hides SOCKS5 protocol)")
+	pflag.Bool("forward_mode", true, "Enable transparent port forwarding mode (hides SOCKS5 protocol)")
 	pflag.String("forward_target", "", "Target address to forward traffic to (host:port)")
 
 	pflag.Parse()
@@ -259,7 +259,7 @@ func main() {
 	viper.SetDefault("token", "")
 	viper.SetDefault("token_file", "")
 	viper.SetDefault("ws_scheme", "wss")
-	viper.SetDefault("forward_mode", false)
+	viper.SetDefault("forward_mode", true)
 	viper.SetDefault("forward_target", "")
 	viper.SetDefault("health_port", 8090)
 
@@ -321,6 +321,7 @@ func main() {
 			slog.Error("Missing SOCKS server", "env", "USERSPACE_PORTFW_SOCKS_SERVER", "error", err)
 			os.Exit(1)
 		}
+		slog.Info("SOCKS server extracted from token", "server", socksServer)
 	}
 
 	if wsScheme != "ws" && wsScheme != "wss" {
@@ -336,6 +337,7 @@ func main() {
 			slog.Error("Forward mode enabled but no target specified", "env", "USERSPACE_PORTFW_FORWARD_TARGET")
 			os.Exit(1)
 		}
+		slog.Info("Forwarding target extracted from token", "target", forwardTarget)
 	}
 
 	// Create websocket configuration
