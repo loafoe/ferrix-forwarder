@@ -14,6 +14,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/loafoe/ferrix-forwarder/client/tools"
 	"github.com/loafoe/ferrix-forwarder/client/tunneler"
 	"github.com/spf13/pflag"
 	"github.com/spf13/viper"
@@ -232,7 +233,7 @@ func main() {
 	// Define command line flags with user-friendly descriptions
 	pflag.String("listen_addr", "0.0.0.0", "The address to listen on for incoming connections")
 	pflag.Int("port", 1080, "The port to listen on for incoming connections")
-	pflag.String("socks_server", "", "The Ferrix tunnel server address (host:port)")
+	pflag.String("socks_server", "", "The Ferrix gateway server address (host:port)")
 	pflag.String("token", "", "Authentication token for the tunnel service")
 	pflag.String("token_file", "", "Path to a file containing the authentication token")
 	pflag.String("ws_scheme", "wss", "WebSocket scheme to use (ws for unencrypted, wss for TLS encrypted)")
@@ -279,11 +280,6 @@ func main() {
 		os.Exit(1)
 	}
 
-	if socksServer == "" {
-		slog.Error("Missing SOCKS server", "env", "USERSPACE_PORTFW_SOCKS_SERVER")
-		os.Exit(1)
-	}
-
 	// Handle token from file if specified
 	if tokenFile != "" {
 		// Check if the file exists
@@ -315,6 +311,16 @@ func main() {
 	if authToken == "" {
 		slog.Error("Missing authentication token", "env", "USERSPACE_PORTFW_TOKEN or --token-file")
 		os.Exit(1)
+	}
+
+	// Check socks server address and extract from token if needed
+	if socksServer == "" {
+		var err error
+		socksServer, err = tools.GetGatewayFromAPIKey(authToken)
+		if err != nil || socksServer == "" {
+			slog.Error("Missing SOCKS server", "env", "USERSPACE_PORTFW_SOCKS_SERVER", "error", err)
+			os.Exit(1)
+		}
 	}
 
 	if wsScheme != "ws" && wsScheme != "wss" {
