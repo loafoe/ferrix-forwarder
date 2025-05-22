@@ -330,8 +330,12 @@ func main() {
 
 	// Check if we're in direct forwarding mode
 	if forwardMode && forwardTarget == "" {
-		slog.Error("Forward mode enabled but no target specified", "env", "USERSPACE_PORTFW_FORWARD_TARGET")
-		os.Exit(1)
+		var err error
+		forwardTarget, err = tools.GetEndpointFromAPIKey(authToken)
+		if err != nil || forwardTarget == "" {
+			slog.Error("Forward mode enabled but no target specified", "env", "USERSPACE_PORTFW_FORWARD_TARGET")
+			os.Exit(1)
+		}
 	}
 
 	// Create websocket configuration
