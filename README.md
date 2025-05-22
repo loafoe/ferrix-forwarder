@@ -56,3 +56,14 @@ The name `ferrix-forwarder` was chosen as a direct nod to the gritty, resourcefu
 ## License
 
 License is [MIT](LICENSE.md)
+
+## Project Structure
+
+The project is organized into the following components:
+
+- `client/` - The client-side application for establishing secure tunnels
+- `server/` - The server-side tunneling service
+- `tunneler/` - Reusable package containing core tunneling functionality
+- `forwarder/` - An optional forwarding service
+- `terraform-ferrix-cf-server/` - Terraform configuration for deployment
+- `kustomize/` - Kubernetes deployment configurations

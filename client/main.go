@@ -2,204 +2,32 @@ package main
 
 import (
 	"context"
-	"crypto/tls"
-	"crypto/x509"
 	"encoding/json"
 	"fmt"
 	"io"
 	"log/slog"
 	"net"
 	"net/http"
-	"net/url"
 	"os"
 	"os/signal"
 	"strings"
-	"sync"
 	"syscall"
 	"time"
 
+	"github.com/loafoe/ferrix-forwarder/client/tunneler"
 	"github.com/spf13/pflag"
 	"github.com/spf13/viper"
-	"golang.org/x/net/proxy"
 	"golang.org/x/net/websocket"
 )
 
 // Global connection statistics tracker
-var connectionStats *ConnectionStats
+var connectionStats *tunneler.ConnectionStats
 
-// getTlsConfig creates and returns a TLS configuration for the client.
-// It uses the system certificate pool and sets up secure TLS options.
-func getTlsConfig(targetHost string) (*tls.Config, error) {
-	systemPool, err := x509.SystemCertPool()
-	if err != nil {
-		return nil, fmt.Errorf("failed to get system cert pool: %w", err)
-	}
+// Note: getTlsConfig and getWsConfig have been moved to the tunneler package
 
-	tlsConfig := &tls.Config{
-		RootCAs:          systemPool,
-		CurvePreferences: []tls.CurveID{tls.CurveP521, tls.CurveP384, tls.CurveP256},
-		MinVersion:       tls.VersionTLS12,
-		// Modern secure cipher suites
-		CipherSuites: []uint16{
-			tls.TLS_ECDHE_RSA_WITH_AES_256_GCM_SHA384,
-			tls.TLS_ECDHE_ECDSA_WITH_AES_256_GCM_SHA384,
-			tls.TLS_ECDHE_RSA_WITH_CHACHA20_POLY1305,
-			tls.TLS_ECDHE_ECDSA_WITH_CHACHA20_POLY1305,
-		},
-	}
+// Note: These functions have been moved to the tunneler package
 
-	// Extract server name from the target host (remove port if present)
-	tlsConfig.ServerName = strings.Split(targetHost, ":")[0]
-	return tlsConfig, nil
-}
-
-func getWsConfig(socksServer, wsScheme string) (*websocket.Config, error) {
-	targetURL := url.URL{Scheme: wsScheme, Host: socksServer}
-
-	config, err := websocket.NewConfig(targetURL.String(), "http://127.0.0.1/")
-	if err != nil {
-		return nil, fmt.Errorf("failed to create websocket config: %w", err)
-	}
-
-	// Only set TLS config when using wss scheme
-	if wsScheme == "wss" {
-		if config.TlsConfig, err = getTlsConfig(socksServer); err != nil {
-			return nil, fmt.Errorf("failed to get TLS config: %w", err)
-		}
-	}
-
-	return config, nil
-}
-
-// iocopy copies data between the writer and reader, reporting any errors through the channel.
-func iocopy(dst io.Writer, src io.Reader, c chan error, w chan<- int64) {
-	written, err := io.Copy(dst, src)
-	c <- err
-	w <- written
-}
-
-type closeable interface {
-	CloseWrite() error
-}
-
-// closeWrite attempts to close the write half of a connection if supported.
-func closeWrite(conn net.Conn) {
-	if closeme, ok := conn.(closeable); ok {
-		_ = closeme.CloseWrite()
-	}
-}
-
-// getProxiedConn attempts to establish a connection through a proxy if available.
-// It tries SOCKS5 proxies first, then falls back to HTTP proxies.
-func getProxiedConn(ctx context.Context, turl url.URL) (net.Conn, error) {
-	// We first try to get a Socks5 proxied connection. If that fails, we're moving on to http{s,}_proxy.
-	dialer := proxy.FromEnvironment()
-	if dialer != proxy.Direct {
-		return dialer.Dial("tcp", turl.Host)
-	}
-
-	turl.Scheme = strings.Replace(turl.Scheme, "ws", "http", 1)
-	proxyURL, err := http.ProxyFromEnvironment(&http.Request{URL: &turl})
-	if proxyURL == nil {
-		// No proxy available, direct connection
-		var d net.Dialer
-		return d.DialContext(ctx, "tcp", turl.Host)
-	}
-
-	// Create a custom dialer that will establish the connection through the proxy
-	proxyDialer := &net.Dialer{
-		Timeout: 30 * time.Second,
-		KeepAliveConfig: net.KeepAliveConfig{
-			Enable: true,
-			Idle:   15 * time.Second,
-		},
-	}
-
-	// Create a transport that uses the proxy
-	transport := &http.Transport{
-		Proxy:               http.ProxyURL(proxyURL),
-		DialContext:         proxyDialer.DialContext,
-		TLSHandshakeTimeout: 10 * time.Second,
-	}
-
-	// Create an HTTP client that uses the transport
-	client := &http.Client{
-		Transport: transport,
-		Timeout:   60 * time.Second,
-	}
-
-	// Create an HTTP CONNECT request with the provided context
-	req, err := http.NewRequestWithContext(ctx, http.MethodConnect, "http://"+turl.Host, nil)
-	if err != nil {
-		return nil, fmt.Errorf("failed to create CONNECT request: %w", err)
-	}
-
-	// Use a special flag to signal that we want the underlying connection
-	req.Header.Set("Connection", "keep-alive")
-
-	// Store the connection once we get it
-	var conn net.Conn
-	var connErr error
-	var connMutex sync.Mutex
-	var connReady sync.WaitGroup
-	connReady.Add(1)
-
-	// Replace the default transport's DialContext with our own that captures the connection
-	origDialContext := transport.DialContext
-	transport.DialContext = func(ctx context.Context, network, addr string) (net.Conn, error) {
-		c, err := origDialContext(ctx, network, addr)
-		if err != nil {
-			connMutex.Lock()
-			connErr = err
-			connMutex.Unlock()
-			connReady.Done()
-			return nil, err
-		}
-
-		connMutex.Lock()
-		conn = c
-		connMutex.Unlock()
-		connReady.Done()
-		return c, nil
-	}
-
-	// Start the CONNECT request in a goroutine
-	go func() {
-		resp, err := client.Do(req)
-		if err != nil {
-			connMutex.Lock()
-			if connErr == nil {
-				connErr = err
-			}
-			connMutex.Unlock()
-			connReady.Done()
-			return
-		}
-		defer resp.Body.Close()
-
-		if resp.StatusCode != http.StatusOK {
-			connMutex.Lock()
-			connErr = fmt.Errorf("proxy server returned status: %s", resp.Status)
-			connMutex.Unlock()
-			connReady.Done()
-		}
-	}()
-
-	// Wait for the connection to be established
-	connReady.Wait()
-
-	// Check for any errors
-	connMutex.Lock()
-	defer connMutex.Unlock()
-	if connErr != nil {
-		if conn != nil {
-			conn.Close()
-		}
-		return nil, fmt.Errorf("proxy connection failed: %w", connErr)
-	}
-
-	return conn, nil
-}
+// Note: This function has been moved to the tunneler package
 
 // handleConnection manages a client connection, creating a websocket connection to the server
 // and forwarding data between the client and server.
@@ -219,7 +47,7 @@ func handleConnection(wsConfig *websocket.Config, conn net.Conn, authToken strin
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 
-	tcp, err := getProxiedConn(ctx, *wsConfig.Location)
+	tcp, err := tunneler.GetProxiedConn(ctx, *wsConfig.Location)
 	if err != nil {
 		slog.Error("Failed to get proxied connection", "error", err)
 		connectionStats.ConnectionFailed()
@@ -228,7 +56,7 @@ func handleConnection(wsConfig *websocket.Config, conn net.Conn, authToken strin
 
 	// Setup TLS client if using wss scheme
 	if wsConfig.Location.Scheme == "wss" {
-		tcp = tls.Client(tcp, wsConfig.TlsConfig)
+		tcp = tunneler.NewTLSClient(tcp, wsConfig.TlsConfig)
 	}
 
 	// Add authentication header
@@ -251,21 +79,21 @@ func handleConnection(wsConfig *websocket.Config, conn net.Conn, authToken strin
 
 	up, down := make(chan int64), make(chan int64)
 	c := make(chan error, 2)
-	go iocopy(ws, conn, c, up)
-	go iocopy(conn, ws, c, down)
+	go tunneler.IoCopy(ws, conn, c, up)
+	go tunneler.IoCopy(conn, ws, c, down)
 
 	for i := 0; i < 2; i++ {
 		if err := <-c; err != nil {
 			if err != io.EOF {
 				slog.Debug("Connection copy operation ended", "error", err)
 			}
-			closeWrite(conn)
-			closeWrite(tcp)
+			tunneler.CloseWrite(conn)
+			tunneler.CloseWrite(tcp)
 			break
 		}
 		// If any of the sides closes the connection, we want to close the write channel.
-		closeWrite(conn)
-		closeWrite(tcp)
+		tunneler.CloseWrite(conn)
+		tunneler.CloseWrite(tcp)
 	}
 
 	// Record statistics
@@ -301,10 +129,10 @@ func handleDirectForwardConnection(wsConfig *websocket.Config, conn net.Conn, au
 
 	// Establish secure tunnel to the target
 	// This hides all the WebSocket and SOCKS5 protocol details
-	tunnel, err := establishSecureTunnel(ctx, wsConfig, authToken, targetAddr)
+	tunnel, err := tunneler.EstablishSecureTunnel(ctx, wsConfig, authToken, targetAddr)
 	if err != nil {
 		// Log a user-friendly error message
-		logConnectionError(err, targetAddr)
+		tunneler.LogConnectionError(err, targetAddr)
 		connectionStats.ConnectionFailed()
 		return
 	}
@@ -319,8 +147,8 @@ func handleDirectForwardConnection(wsConfig *websocket.Config, conn net.Conn, au
 	// Start data forwarding using abstracted tunnel
 	up, down := make(chan int64), make(chan int64)
 	c := make(chan error, 2)
-	go iocopy(tunnel, conn, c, up)
-	go iocopy(conn, tunnel, c, down)
+	go tunneler.IoCopy(tunnel, conn, c, up)
+	go tunneler.IoCopy(conn, tunnel, c, down)
 
 	// Wait for either side to close the connection
 	for i := 0; i < 2; i++ {
@@ -328,14 +156,14 @@ func handleDirectForwardConnection(wsConfig *websocket.Config, conn net.Conn, au
 			if err != io.EOF {
 				slog.Debug("Connection copy operation ended", "error", err)
 			}
-			closeWrite(conn)
-			if closer, ok := tunnel.(closeable); ok {
+			tunneler.CloseWrite(conn)
+			if closer, ok := tunnel.(tunneler.Closeable); ok {
 				_ = closer.CloseWrite()
 			}
 			break
 		}
-		closeWrite(conn)
-		if closer, ok := tunnel.(closeable); ok {
+		tunneler.CloseWrite(conn)
+		if closer, ok := tunnel.(tunneler.Closeable); ok {
 			_ = closer.CloseWrite()
 		}
 	}
@@ -399,7 +227,7 @@ func startHealthServer(port int) {
 
 func main() {
 	// Initialize connection statistics
-	connectionStats = NewConnectionStats()
+	connectionStats = tunneler.NewConnectionStats()
 
 	// Define command line flags with user-friendly descriptions
 	pflag.String("listen_addr", "0.0.0.0", "The address to listen on for incoming connections")
@@ -469,7 +297,7 @@ func main() {
 	}
 
 	// Create websocket configuration
-	wsConfig, err := getWsConfig(socksServer, wsScheme)
+	wsConfig, err := tunneler.GetWsConfig(socksServer, wsScheme)
 	if err != nil {
 		slog.Error("Failed to create websocket config", "error", err)
 		os.Exit(1)

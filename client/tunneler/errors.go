@@ -1,4 +1,4 @@
-package main
+package tunneler
 
 import (
 	"log/slog"
@@ -6,9 +6,9 @@ import (
 	"strings"
 )
 
-// logConnectionError provides user-friendly error messages for common connection errors
+// LogConnectionError provides user-friendly error messages for common connection errors
 // This improves the consumer experience by translating technical errors into understandable messages
-func logConnectionError(err error, targetAddr string) {
+func LogConnectionError(err error, targetAddr string) {
 	// Log a more user-friendly message about connection errors
 	if err != nil {
 		if netErr, ok := err.(net.Error); ok && netErr.Timeout() {

@@ -1,84 +1,17 @@
-package main
+package tunneler
 
 import (
-	"context"
-	"crypto/tls"
 	"fmt"
 	"io"
 	"net"
-	"net/http"
-
-	"golang.org/x/net/websocket"
 )
 
-// tunnelConn is a wrapper around the WebSocket connection that implements io.ReadWriter and io.Closer
-type tunnelConn struct {
-	ws     *websocket.Conn
-	reader io.Reader
-}
-
-func (t *tunnelConn) Read(p []byte) (n int, err error) {
-	return t.reader.Read(p)
-}
-
-func (t *tunnelConn) Write(p []byte) (n int, err error) {
-	return t.ws.Write(p)
-}
-
-func (t *tunnelConn) Close() error {
-	return t.ws.Close()
-}
-
-// CloseWrite implements the closeable interface for the tunnelConn
-func (t *tunnelConn) CloseWrite() error {
-	// WebSocket doesn't have a direct CloseWrite method like TCP,
-	// but we can send a close message while keeping the connection open for reading
-	return t.ws.WriteClose(1000) // 1000 is the normal closure code
-}
-
-// establishSecureTunnel creates a secure connection to the target through the tunnel service
-// This function hides all the underlying WebSocket and proxy protocol details from consumers
-func establishSecureTunnel(ctx context.Context, wsConfig *websocket.Config, authToken, targetAddr string) (io.ReadWriteCloser, error) {
-	// Establish connection to the tunnel server
-	tcp, err := getProxiedConn(ctx, *wsConfig.Location)
-	if err != nil {
-		return nil, fmt.Errorf("unable to connect to tunnel service: %w", err)
-	}
-
-	// Setup TLS client if using secure connection
-	if wsConfig.Location.Scheme == "wss" {
-		tcp = tls.Client(tcp, wsConfig.TlsConfig)
-	}
-
-	// Add authentication header
-	headers := http.Header{}
-	headers.Set("X-STL-Auth", authToken)
-	wsConfig.Header = headers
-
-	// Create secure tunnel client
-	ws, err := websocket.NewClient(wsConfig, tcp)
-	if err != nil {
-		tcp.Close()
-		return nil, fmt.Errorf("unable to establish secure tunnel: %w", err)
-	}
-
-	// Establish connection to target through the tunnel
-	// This performs SOCKS5 handshake with username/password authentication
-	if err := setupSocks5Connection(ws, targetAddr); err != nil {
-		ws.Close()
-		return nil, fmt.Errorf("failed to connect to %s: %w", targetAddr, err)
-	}
-
-	// Return a wrapped connection that implements io.ReadWriteCloser
-	return &tunnelConn{ws: ws, reader: ws}, nil
-}
-
-// setupSocks5Connection handles the SOCKS5 protocol handshake and connect request
+// SetupSocks5Connection handles the SOCKS5 protocol handshake and connect request
 // without exposing the protocol details to the caller.
 // It uses username/password authentication with credentials:
 // - Username: "foo"
 // - Password: "bar"
-func setupSocks5Connection(ws io.ReadWriter, targetAddr string) error {
+func SetupSocks5Connection(ws io.ReadWriter, targetAddr string) error {
 	// Write SOCKS5 handshake (version 5, 1 auth method, username/password auth)
 	// 0x05: SOCKS version 5
 	// 0x01: Number of authentication methods supported
