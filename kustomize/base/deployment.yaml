@@ -18,7 +18,7 @@ spec:
         - name: ferrix-forwarder-client
           securityContext:
             {}
-          image: ghcr.io/loafoe/ferrix-forwarder-client:v0.0.8
+          image: ghcr.io/loafoe/ferrix-forwarder-client:v0.3.0
           resources:
             requests:
               cpu: 100m
