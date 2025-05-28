@@ -1,3 +1,7 @@
+locals {
+  signing_key = var.signing_key != "" ? var.signing_key : random_password.signing_key.result
+}
+
 resource "random_password" "signing_key" {
   length           = 32
   special          = true
@@ -30,7 +34,7 @@ resource "cloudfoundry_app" "server" {
   instances    = var.server_instances
 
   environment = {
-    USERSPACE_PORTFW_SHARED_SECRET = random_password.signing_key.result
+    USERSPACE_PORTFW_SHARED_SECRET = local.signing_key
     USERSPACE_PORTFW_ALLOWED_HOSTS = "" # Empty string to allow all hosts
   }
 

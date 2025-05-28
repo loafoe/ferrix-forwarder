@@ -34,3 +34,9 @@ variable "server_instances" {
   type    = number
   default = 2
 }
+
+variable "signing_key" {
+  type    = string
+  default = ""
+  sensitive = true
+}
